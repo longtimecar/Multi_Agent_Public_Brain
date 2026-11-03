@@ -584,7 +584,10 @@ SOURCE_LABELS.update({
     "dsh": "DeepSeek Harness",
     "claude-code": SOURCE_LABELS.get("claude-code", "Claude Code"),
     "openviking": "OpenViking",
+    "openviking-import": "OpenViking 导入",
     "unknown-agent": "未知来源",
+    "unknown": "未标记来源",
+    "membrain-dashboard": "工作台录入",
 })
 
 

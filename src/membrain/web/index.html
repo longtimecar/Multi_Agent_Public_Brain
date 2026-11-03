@@ -88,7 +88,19 @@
                   <div><div class="panel-title-row"><h2>与 Agent 对话</h2><span class="panel-meta">记忆已接入</span></div><p class="panel-subtitle">回答会参考当前召回的个人记忆。</p></div>
                   <button class="icon-button" id="new-chat-button" type="button" title="新建会话" aria-label="新建会话"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
                 </div>
-                <div class="chat-messages" id="chat-messages" aria-live="polite"><div class="chat-empty"><div class="empty-mark">AI</div><h3>开始一段对话</h3><p>试着问我：我最近在做什么项目？</p></div></div>
+                <div class="chat-messages" id="chat-messages" aria-live="polite">
+                  <div class="chat-empty">
+                    <div class="empty-mark">AI</div>
+                    <p class="chat-kicker">MEMORY-ASSISTED CHAT</p>
+                    <h3>从一个真实问题开始</h3>
+                    <p>回答会带着你已经确认过的长期记忆，不再是每次重新自我介绍。</p>
+                    <div class="chat-starters">
+                      <button type="button" data-chat-prompt="我最近在做什么项目？">我最近在做什么项目？</button>
+                      <button type="button" data-chat-prompt="回顾一下我的工作偏好。">回顾我的工作偏好</button>
+                      <button type="button" data-chat-prompt="有哪些信息需要我确认或纠正？">检查待确认的信息</button>
+                    </div>
+                  </div>
+                </div>
                 <form class="chat-composer" id="chat-form">
                   <label class="chat-input-wrap" for="chat-input"><span class="sr-only">输入消息</span><textarea id="chat-input" rows="2" maxlength="20000" placeholder="输入消息，按 Ctrl+Enter 发送"></textarea></label>
                   <button class="button button-dark chat-send" id="chat-send" type="submit"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 4 16 8-16 8 3-8-3-8Z"/><path d="M7 12h13"/></svg><span>发送</span></button>
@@ -108,7 +120,7 @@
         <div class="view" data-view-panel="overview">
           <section class="page-heading" id="overview">
             <div>
-              <p class="eyebrow">PERSONAL MEMORY CONTROL ROOM</p>
+              <p class="eyebrow">MEMORY CONTROL ROOM</p>
               <h1>记忆总览</h1>
               <p class="heading-copy">查看跨 Agent 共享的事实、证据与生命周期状态。</p>
             </div>
@@ -126,16 +138,16 @@
 
           <section class="stats-grid" aria-label="统计概览">
             <article class="stat-card stat-card-accent" role="button" tabindex="0" data-goto="memories" title="打开全部记忆">
-              <span class="stat-label">全部事实</span><strong id="stat-total">—</strong><span class="stat-foot">Canonical facts</span>
+              <span class="stat-label">全部事实</span><strong id="stat-total">—</strong><span class="stat-foot">跨 Agent 汇总</span>
             </article>
             <article class="stat-card" role="button" tabindex="0" data-goto="memories" data-status="active" title="查看当前有效的记忆">
-              <span class="stat-label">当前有效</span><strong id="stat-active">—</strong><span class="stat-foot">Active memories</span>
+              <span class="stat-label">当前有效</span><strong id="stat-active">—</strong><span class="stat-foot">可参与召回</span>
             </article>
             <article class="stat-card" role="button" tabindex="0" data-goto="conflicts" title="处理待决策的冲突">
-              <span class="stat-label">待处理冲突</span><strong id="stat-contested">—</strong><span class="stat-foot">Needs a decision</span>
+              <span class="stat-label">待处理冲突</span><strong id="stat-contested">—</strong><span class="stat-foot">等待你决定</span>
             </article>
             <article class="stat-card" role="button" tabindex="0" data-goto="episodes" title="查看捕获记录">
-              <span class="stat-label">捕获对话</span><strong id="stat-episodes">—</strong><span class="stat-foot">User episodes</span>
+              <span class="stat-label">捕获对话</span><strong id="stat-episodes">—</strong><span class="stat-foot">原始用户回合</span>
             </article>
           </section>
           <section class="overview-empty is-hidden" id="overview-empty" aria-live="polite">
@@ -145,6 +157,21 @@
               <p>接入一个 Agent 后，新的对话会按你的设置自动提取；也可以先点右上角“添加记忆”，用一句原话建立第一条可追溯记忆。</p>
             </div>
           </section>
+          <div class="overview-lower" id="overview-lower">
+            <section class="panel recent-panel">
+              <div class="panel-header">
+                <div><h2>最近写入</h2><p class="panel-subtitle">最新形成的长期记忆与证据</p></div>
+                <button class="text-link" type="button" data-goto="memories">查看全部</button>
+              </div>
+              <div class="recent-list" id="recent-list"><div class="side-empty">正在读取最近的记忆…</div></div>
+            </section>
+            <section class="panel source-summary-panel">
+              <div class="panel-header">
+                <div><h2>来源分布</h2><p class="panel-subtitle">这些记忆由哪些 Agent 贡献</p></div>
+              </div>
+              <div class="source-summary" id="source-summary"><div class="side-empty">正在统计来源…</div></div>
+            </section>
+          </div>
         </div>
 
         <div class="view" data-view-panel="memories">
@@ -233,7 +260,7 @@
 
         <div class="view" data-view-panel="library">
           <details class="import-fold" id="import-fold">
-            <summary><span>数据导入 · <strong id="import-fold-count">—</strong></span><span class="import-fold-hint">本机 Agent 会话与可选历史来源 · 展开管理</span></summary>
+            <summary><span>数据导入 · <strong id="import-fold-count">按需扫描</strong></span><span class="import-fold-hint">本机 Agent 会话与可选历史来源 · 展开管理</span></summary>
             <div class="import-card" id="session-import-card"><div class="side-empty">正在扫描本机 Agent 会话…</div></div>
             <div class="import-card" id="import-card"><div class="side-empty">正在检查可导入的内容…</div></div>
           </details>

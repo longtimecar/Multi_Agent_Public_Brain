@@ -54,6 +54,11 @@ function shortToken(value, size = 10) {
   return text.length > size * 2 ? `${text.slice(0, size)}…${text.slice(-4)}` : text;
 }
 
+function widthBucket(value) {
+  const n = Math.max(0, Math.min(100, Number(value) || 0));
+  return `w-${n === 0 ? 0 : Math.ceil(n / 10) * 10}`;
+}
+
 function statusBadge(status) {
   return `<span class="status-badge status-${escapeHtml(status)}">${escapeHtml(labels.status[status] || status)}</span>`;
 }
@@ -64,6 +69,49 @@ function typeTag(type) {
 
 function displaySource(source) {
   return state.lib?.sourceLabels?.[source] || state.sourceLabels?.[source] || source || '未知来源';
+}
+
+function renderRecent(recent) {
+  const root = $('#recent-list');
+  if (!root) return;
+  const items = Array.isArray(recent) ? recent.slice(0, 6) : [];
+  if (!items.length) {
+    root.innerHTML = '<div class="side-empty">还没有形成长期记忆。</div>';
+    return;
+  }
+  root.innerHTML = items.map((fact) => `
+    <button class="recent-item" type="button" data-recent-fact="${escapeHtml(fact.id)}">
+      <span class="recent-type ${escapeHtml(fact.type)}" aria-hidden="true"></span>
+      <span class="recent-main">
+        <strong>${escapeHtml(fact.abstract || fact.claim)}</strong>
+        <small>${escapeHtml(labels.type[fact.type] || fact.type)} · ${escapeHtml(displaySource(fact.source?.agent || 'unknown'))} · ${formatDate(fact.valid_from || fact.created_at)}</small>
+      </span>
+      ${statusBadge(fact.status)}
+    </button>`).join('');
+  root.querySelectorAll('[data-recent-fact]').forEach((button) => button.addEventListener('click', async () => {
+    state.tree = { type: '', subject: '' };
+    switchView('memories');
+    await selectFact(button.dataset.recentFact);
+  }));
+}
+
+function renderSourceSummary(agents) {
+  const root = $('#source-summary');
+  if (!root) return;
+  const entries = Object.entries(agents || {}).filter(([, count]) => Number(count) > 0).sort((a, b) => b[1] - a[1]);
+  if (!entries.length) {
+    root.innerHTML = '<div class="side-empty">还没有来源数据。</div>';
+    return;
+  }
+  const total = entries.reduce((sum, [, count]) => sum + Number(count), 0);
+  const max = Math.max(...entries.map(([, count]) => Number(count)), 1);
+  const tones = ['teal', 'coral', 'gold', 'slate', 'moss', 'blue'];
+  root.innerHTML = `<p class="source-total"><strong>${total}</strong><span>条事实来自 ${entries.length} 个来源</span></p>
+    <div class="source-rows">${entries.map(([source, count], index) => `
+      <div class="source-row" title="${escapeHtml(source)}">
+        <div class="source-label"><span>${escapeHtml(displaySource(source))}</span><strong>${count}</strong></div>
+        <div class="source-track"><span class="source-fill ${tones[index % tones.length]} ${widthBucket(Math.max(8, Number(count) / max * 100))}"></span></div>
+      </div>`).join('')}</div>`;
 }
 
 function renderOverview(data) {
@@ -79,13 +127,29 @@ function renderOverview(data) {
   online.classList.add('is-online');
   $('#system-label').textContent = '本地服务在线';
   $('#system-detail').textContent = (stats.total ?? 0) > 0 ? `${stats.active ?? 0} 条有效记忆` : '等待第一条记忆';
-  $('#overview-empty')?.classList.toggle('is-hidden', (stats.total ?? 0) > 0);
+  const isEmpty = !(stats.total ?? 0);
+  $('#overview-empty')?.classList.toggle('is-hidden', !isEmpty);
+  $('#overview-lower')?.classList.toggle('is-hidden', isEmpty);
+  renderRecent(data.recent);
+  renderSourceSummary(data.agents);
 }
+
+const CHAT_EMPTY_HTML = `<div class="chat-empty">
+  <div class="empty-mark">AI</div>
+  <p class="chat-kicker">MEMORY-ASSISTED CHAT</p>
+  <h3>从一个真实问题开始</h3>
+  <p>回答会带着你已经确认过的长期记忆，不再是每次重新自我介绍。</p>
+  <div class="chat-starters">
+    <button type="button" data-chat-prompt="我最近在做什么项目？">我最近在做什么项目？</button>
+    <button type="button" data-chat-prompt="回顾一下我的工作偏好。">回顾我的工作偏好</button>
+    <button type="button" data-chat-prompt="有哪些信息需要我确认或纠正？">检查待确认的信息</button>
+  </div>
+</div>`;
 
 function renderChat() {
   const list = $('#chat-messages');
   if (!state.chat.messages.length) {
-    list.innerHTML = '<div class="chat-empty"><div class="empty-mark">AI</div><h3>开始一段对话</h3><p>试着问我：我最近在做什么项目？</p></div>';
+    list.innerHTML = CHAT_EMPTY_HTML;
   } else {
     list.innerHTML = state.chat.messages.map((item) => `<div class="chat-message chat-message-${escapeHtml(item.role)}"><div class="chat-message-label">${item.role === 'user' ? '你' : 'Agent'}</div><div class="chat-bubble">${escapeHtml(item.content).replace(/\n/g, '<br>')}</div></div>`).join('');
     list.scrollTop = list.scrollHeight;
@@ -218,7 +282,7 @@ function renderDetail(fact) {
   content.innerHTML = `
     <div class="detail-top"><div><div class="memory-line">${typeTag(fact.type)}${statusBadge(fact.status)}</div><h2 class="detail-title">${escapeHtml(fact.claim)}</h2><p class="detail-id">${escapeHtml(fact.id)}</p></div></div>
     <div class="detail-actions">${canAct ? `<button class="button button-outline" data-action="correct">${icon('edit')}纠正</button><button class="button button-outline" data-action="contest">${icon('flag')}标记冲突</button><button class="button button-danger" data-action="retract">${icon('undo')}撤回</button>${fact.status === 'contested' ? `<button class="button button-outline" data-action="resolve">解决冲突</button>` : ''}` : '<span class="panel-meta">此记忆已结束当前生命周期</span>'}</div>
-    <div class="detail-section"><div class="detail-section-label">Confidence</div><div class="confidence-row"><div class="confidence-track"><div class="confidence-fill" style="width:${confidence}%"></div></div><span class="confidence-value">${confidence}%</span></div></div>
+    <div class="detail-section"><div class="detail-section-label">Confidence</div><div class="confidence-row"><div class="confidence-track"><div class="confidence-fill ${widthBucket(confidence)}"></div></div><span class="confidence-value">${confidence}%</span></div></div>
     <div class="detail-section"><div class="detail-section-label">原文证据 · ${fact.evidence?.length ?? 0}</div>${evidence || '<p class="panel-subtitle">没有证据。</p>'}</div>
     <div class="detail-section"><div class="detail-meta"><div><span class="meta-label">来源 Agent</span><span class="meta-value">${escapeHtml(displaySource(fact.source?.agent || 'unknown'))}</span></div><div><span class="meta-label">会话</span><span class="meta-value">${escapeHtml(fact.source?.session || '—')}</span></div><div><span class="meta-label">首次记录</span><span class="meta-value">${formatDate(fact.created_at)}</span></div><div><span class="meta-label">有效起点</span><span class="meta-value">${formatDate(fact.valid_from)}</span></div></div></div>`;
   content.querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => openAction(button.dataset.action, fact)));
@@ -590,7 +654,7 @@ async function copyPrompt(key) {
 }
 
 const importStages = { preparing: '正在准备', cleaning: 'LLM 识别分类清洗中', indexing: '正在建立索引', distilling: '正在提炼短记忆' };
-state.lib = { labels: {}, sourceLabels: {}, treeCounts: {}, lastReport: null, poll: null, request: 0, items: [], notes: [], selected: null, tree: { source: '', category: '' }, treeOpen: {} };
+state.lib = { labels: {}, sourceLabels: {}, treeCounts: {}, lastReport: null, poll: null, request: 0, importLoaded: false, importLoading: false, items: [], notes: [], selected: null, tree: { source: '', category: '' }, treeOpen: {} };
 
 function librarySourceLabel(source) {
   return state.lib.sourceLabels[source] || source || '未知来源';
@@ -672,6 +736,10 @@ function renderImportCard(preview, batches) {
 }
 
 async function loadImport() {
+  if (state.lib.importLoading) return;
+  state.lib.importLoading = true;
+  const foldCount = $('#import-fold-count');
+  if (foldCount && !state.lib.importLoaded) foldCount.textContent = '正在扫描…';
   const settled = await Promise.allSettled([
     fetchJson('/api/import/sessions/preview'), fetchJson('/api/import/preview'), fetchJson('/api/import/batches')]);
   const [sessionResult, previewResult, batchResult] = settled;
@@ -686,13 +754,16 @@ async function loadImport() {
   }
   if (preview && batches) renderImportCard(preview, batches.batches);
   else $('#import-card').innerHTML = `<h3>从 OpenViking 导入旧记忆</h3><p class="import-note">${escapeHtml(previewResult.reason?.message || batchResult.reason?.message || '读取失败')}</p>`;
-  const foldCount = $('#import-fold-count');
   if (foldCount && sessions) {
     const ovPart = preview?.total > 0 ? ` · OV ${preview.already_imported}/${preview.total}` : '';
     foldCount.textContent = `会话 ${sessions.already_imported}/${sessions.total}（噪声 ${sessions.noise || 0}）${ovPart}`;
     const hint = $('#import-fold')?.querySelector('.import-fold-hint');
     if (hint) hint.textContent = `自动发现 ${sessions.sources?.length || 0} 个会话源${preview?.total > 0 ? ' + OpenViking' : ''} · 展开管理`;
+  } else if (foldCount) {
+    foldCount.textContent = '扫描失败';
   }
+  state.lib.importLoaded = Boolean(sessions);
+  state.lib.importLoading = false;
   const failed = settled.find((result) => result.status === 'rejected');
   if (failed) notify(failed.reason?.message || '部分导入信息读取失败。', true);
 }
@@ -866,6 +937,7 @@ const VIEW_LABELS = { chat: 'Agent 对话', overview: '记忆总览', memories: 
 
 function switchView(name, opts = {}) {
   state.currentView = name;
+  if (location.hash !== `#/${name}`) history.replaceState(null, '', `#/${name}`);
   const panelName = name === 'conflicts' ? 'memories' : name;
   $$('.view').forEach((panel) => panel.classList.toggle('is-active', panel.dataset.viewPanel === panelName));
   $$('.nav-item').forEach((button) => button.classList.remove('is-active'));
@@ -912,6 +984,12 @@ function bind() {
   $('#extract-button').addEventListener('click', startExtract);
   $('#reindex-button').addEventListener('click', reindex);
   $('#new-chat-button').addEventListener('click', newChat);
+  $('#chat-messages').addEventListener('click', (event) => {
+    const starter = event.target.closest('[data-chat-prompt]');
+    if (!starter) return;
+    $('#chat-input').value = starter.dataset.chatPrompt || '';
+    $('#chat-input').focus();
+  });
   $('#chat-form').addEventListener('submit', sendChat);
   $('#chat-input').addEventListener('keydown', (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
@@ -936,6 +1014,9 @@ function bind() {
   $('#status-filter').addEventListener('change', (event) => { state.filters.status = event.target.value; loadData(); });
   $('#type-filter').addEventListener('change', (event) => { state.filters.type = event.target.value; loadData(); });
   $('#diffs-refresh')?.addEventListener('click', () => loadDiffs());
+  $('#import-fold')?.addEventListener('toggle', (event) => {
+    if (event.target.open && !state.lib.importLoaded) loadImport();
+  });
   $('#diffs-search')?.addEventListener('input', () => { window.clearTimeout(window.__diffsTimer); window.__diffsTimer = window.setTimeout(loadDiffs, 240); });
   $('#diffs-skipped-only')?.addEventListener('change', () => loadDiffs());
   $('#library-tree')?.addEventListener('click', (event) => {
@@ -983,7 +1064,7 @@ function bind() {
     renderTree();
     renderFacts();
   });
-  $$('.stat-card[data-goto]').forEach((card) => {
+  $$('[data-goto]').forEach((card) => {
     const open = () => switchView(card.dataset.goto, { status: card.dataset.status || '' });
     card.addEventListener('click', open);
     card.addEventListener('keydown', (event) => {
@@ -1102,5 +1183,6 @@ renderMemorySources();
 restoreChat();
 loadData();
 loadAgents();
-loadImport();
 loadLibrary();
+const initialView = location.hash.replace(/^#\/?/, '');
+if (initialView && initialView !== 'chat' && VIEW_LABELS[initialView]) switchView(initialView);
