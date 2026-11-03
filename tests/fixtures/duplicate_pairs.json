@@ -1,0 +1,10 @@
+[
+  {"label":"same","subject":"dietary","a":"Does not eat spicy food","b":"Avoids spicy dishes"},
+  {"label":"different","subject":"dietary","a":"Does not eat spicy food","b":"Enjoys spicy food"},
+  {"label":"same","subject":"language","a":"Uses Python for programming","b":"Programs mostly in Python"},
+  {"label":"different","subject":"language","a":"Uses Python for programming","b":"Uses Rust for programming"},
+  {"label":"same","subject":"style","a":"Prefers concise answers","b":"Likes brief responses"},
+  {"label":"different","subject":"style","a":"Prefers concise answers","b":"Prefers long and detailed answers"},
+  {"label":"same","subject":"drinks","a":"Prefers tea","b":"Likes drinking tea"},
+  {"label":"different","subject":"drinks","a":"Prefers tea","b":"Dislikes tea"}
+]

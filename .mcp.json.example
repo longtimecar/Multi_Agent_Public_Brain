@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "membrain": {
+      "command": "<PROJECT>/.venv/Scripts/python.exe",
+      "args": [
+        "-m",
+        "membrain.server"
+      ],
+      "env": {
+        "MEMBRAIN_HOME": "<PROJECT>/memory"
+      }
+    }
+  }
+}

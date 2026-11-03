@@ -1,0 +1,25 @@
+# Normalise line endings in the repository. Checked-out files stay LF on every
+# platform, so diffs and patches do not depend on who committed them.
+* text=auto eol=lf
+
+*.py text
+*.md text
+*.toml text
+*.json text
+*.txt text
+*.yml text
+*.yaml text
+*.cfg text
+*.ini text
+*.html text
+*.css text
+*.js text
+*.ts text
+*.ps1 text eol=crlf
+*.sh text eol=lf
+*.bat text eol=crlf
+*.png binary
+*.jpg binary
+*.mp4 binary
+*.zip binary
+*.whl binary

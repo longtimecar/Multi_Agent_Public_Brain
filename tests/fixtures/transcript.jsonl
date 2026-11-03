@@ -1,0 +1,11 @@
+{"type":"queue-operation","message":{"role":"user","content":"queued metadata"}}
+{"type":"api-request-blob","message":{"role":"user","content":"API copy must not be captured"}}
+{"type":"user","isMeta":true,"message":{"role":"user","content":"meta message"}}
+{"type":"user","isSidechain":true,"message":{"role":"user","content":"subagent message"}}
+{"type":"user","toolUseResult":{"content":"tool"},"message":{"role":"user","content":[{"type":"tool_result","content":"tool output"},{"type":"text","text":"not typed"}]}}
+{"type":"user","uuid":"real-user-1","timestamp":"2026-10-12T11:22:33Z","message":{"role":"user","content":"I prefer tea. <memory>injected fact</memory><system-reminder>system text</system-reminder>"}}
+{"type":"user","uuid":"command","timestamp":"2026-10-12T11:22:34Z","message":{"role":"user","content":"<command-name>/compact</command-name><command-args>foo</command-args><local-command-stdout>output</local-command-stdout>"}}
+{"type":"user","uuid":"slash","message":{"role":"user","content":"/clear"}}
+{"type":"assistant","timestamp":"2026-10-12T11:23:00Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"private"},{"type":"tool_use","name":"something"},{"type":"text","text":"Understood."}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"something"}]}}
+{"type":"user","timestamp":"2026-10-12T11:24:00Z","message":{"role":"user","content":"我平时喝茶。"}}

@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>membrain / 个人 Agent 工作台</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="主导航">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">M</span>
+        <span class="brand-name">membrain</span>
+      </div>
+      <nav class="nav-list">
+        <div class="nav-group">
+          <div class="nav-group-title">对话</div>
+          <button class="nav-item is-active" type="button" data-view="chat" aria-label="Agent 对话">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 6.5A3.5 3.5 0 0 1 8.5 3h7A3.5 3.5 0 0 1 19 6.5v6a3.5 3.5 0 0 1-3.5 3.5H12l-4.5 4v-4.2A3.5 3.5 0 0 1 5 12.5v-6Z"/><path d="M8.5 9h.01M12 9h.01M15.5 9h.01"/></svg></span><span>Agent 对话</span>
+          </button>
+        </div>
+        <div class="nav-group">
+          <div class="nav-group-title">记忆管理</div>
+          <button class="nav-item" type="button" data-view="overview" aria-label="记忆总览">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg></span><span>记忆总览</span>
+          </button>
+        </div>
+        <div class="nav-group">
+          <div class="nav-group-title">会话审计</div>
+          <button class="nav-item" type="button" data-view="diffs" aria-label="会话 Diff">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 6h8M8 12h8M8 18h5"/><path d="M5 6h.01M5 12h.01M5 18h.01"/></svg></span><span>会话 Diff</span>
+          </button>
+        </div>
+        <div class="nav-group">
+          <div class="nav-group-title">资料与接入</div>
+          <button class="nav-item" type="button" data-view="library" aria-label="资料库">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h6v14H4zM14 5h6v14h-6z"/></svg></span><span>资料库</span>
+          </button>
+          <button class="nav-item" type="button" data-view="agents" aria-label="Agent 接入">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 9l-4 3 4 3M16 9l4 3-4 3M13 6l-2 12"/></svg></span><span>Agent 接入</span>
+          </button>
+          <button class="nav-item" type="button" data-view="model" aria-label="模型连接">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3.5 19 7v10l-7 3.5L5 17V7l7-3.5Z"/><path d="m5 7 7 3.5L19 7M12 10.5V20.5"/></svg></span><span>模型连接</span>
+          </button>
+        </div>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="system-card">
+          <span class="system-dot" id="system-dot"></span>
+          <div>
+            <strong id="system-label">正在检查</strong>
+            <span id="system-detail">本地记忆服务</span>
+          </div>
+        </div>
+        <p class="sidebar-note">事实文件只读保存，生命周期变化记录在账本中。</p>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <div class="breadcrumb"><button class="crumb-link" type="button" id="crumb-home">个人空间</button><span class="breadcrumb-sep">/</span><button class="crumb-link is-hidden" type="button" id="crumb-hub">记忆总览</button><span class="breadcrumb-sep is-hidden" id="crumb-hub-sep">/</span><button class="crumb-link crumb-current" type="button" id="current-view">Agent 对话</button></div>
+        <div class="topbar-actions">
+          <button class="icon-button refresh-button" id="refresh-button" type="button" title="刷新当前页面" aria-label="刷新当前页面">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8.1 8.1 0 0 0-14.8-3L3 11m0 0V5m0 6h6M4 13a8.1 8.1 0 0 0 14.8 3L21 13m0 0v6m0-6h-6"/></svg>
+          </button>
+          <button class="button button-dark" id="add-button" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            <span>添加记忆</span>
+          </button>
+        </div>
+      </header>
+
+      <div class="content-wrap">
+        <div class="view is-active" data-view-panel="chat">
+          <section class="agent-section" id="agent">
+            <div class="page-heading agent-heading">
+              <div>
+                <h1>个人 Agent 工作台</h1>
+                <p class="heading-copy">把同一套长期记忆带进每一次模型对话。</p>
+              </div>
+              <div class="heading-actions"><span class="session-chip" id="chat-session-label">新会话</span></div>
+            </div>
+            <div class="agent-layout">
+              <section class="panel chat-panel" aria-label="Agent 对话">
+                <div class="panel-header">
+                  <div><div class="panel-title-row"><h2>与 Agent 对话</h2><span class="panel-meta">记忆已接入</span></div><p class="panel-subtitle">回答会参考当前召回的个人记忆。</p></div>
+                  <button class="icon-button" id="new-chat-button" type="button" title="新建会话" aria-label="新建会话"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+                </div>
+                <div class="chat-messages" id="chat-messages" aria-live="polite"><div class="chat-empty"><div class="empty-mark">AI</div><h3>开始一段对话</h3><p>试着问我：我最近在做什么项目？</p></div></div>
+                <form class="chat-composer" id="chat-form">
+                  <label class="chat-input-wrap" for="chat-input"><span class="sr-only">输入消息</span><textarea id="chat-input" rows="2" maxlength="20000" placeholder="输入消息，按 Ctrl+Enter 发送"></textarea></label>
+                  <button class="button button-dark chat-send" id="chat-send" type="submit"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 4 16 8-16 8 3-8-3-8Z"/><path d="M7 12h13"/></svg><span>发送</span></button>
+                </form>
+              </section>
+
+              <aside class="agent-side">
+                <section class="panel memory-source-panel">
+                  <div class="panel-header"><div><h2>本次使用的记忆</h2><p class="panel-subtitle">只显示最近一次回答的来源</p></div><span class="count-pill" id="chat-memory-count">0</span></div>
+                  <div class="memory-source-list" id="chat-memory-list"><div class="side-empty">发送消息后，这里会列出召回的记忆。</div></div>
+                </section>
+              </aside>
+            </div>
+          </section>
+        </div>
+
+        <div class="view" data-view-panel="overview">
+          <section class="page-heading" id="overview">
+            <div>
+              <p class="eyebrow">PERSONAL MEMORY CONTROL ROOM</p>
+              <h1>记忆总览</h1>
+              <p class="heading-copy">查看跨 Agent 共享的事实、证据与生命周期状态。</p>
+            </div>
+            <div class="heading-actions">
+              <button class="button button-outline" id="extract-button" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14"/></svg>
+                <span>提取新记忆</span>
+              </button>
+              <button class="button button-outline" id="reindex-button" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
+                <span>重建索引</span>
+              </button>
+            </div>
+          </section>
+
+          <section class="stats-grid" aria-label="统计概览">
+            <article class="stat-card stat-card-accent" role="button" tabindex="0" data-goto="memories" title="打开全部记忆">
+              <span class="stat-label">全部事实</span><strong id="stat-total">—</strong><span class="stat-foot">Canonical facts</span>
+            </article>
+            <article class="stat-card" role="button" tabindex="0" data-goto="memories" data-status="active" title="查看当前有效的记忆">
+              <span class="stat-label">当前有效</span><strong id="stat-active">—</strong><span class="stat-foot">Active memories</span>
+            </article>
+            <article class="stat-card" role="button" tabindex="0" data-goto="conflicts" title="处理待决策的冲突">
+              <span class="stat-label">待处理冲突</span><strong id="stat-contested">—</strong><span class="stat-foot">Needs a decision</span>
+            </article>
+            <article class="stat-card" role="button" tabindex="0" data-goto="episodes" title="查看捕获记录">
+              <span class="stat-label">捕获对话</span><strong id="stat-episodes">—</strong><span class="stat-foot">User episodes</span>
+            </article>
+          </section>
+          <section class="overview-empty is-hidden" id="overview-empty" aria-live="polite">
+            <div class="overview-empty-mark" aria-hidden="true">01</div>
+            <div>
+              <h2>记忆库现在是空的</h2>
+              <p>接入一个 Agent 后，新的对话会按你的设置自动提取；也可以先点右上角“添加记忆”，用一句原话建立第一条可追溯记忆。</p>
+            </div>
+          </section>
+        </div>
+
+        <div class="view" data-view-panel="memories">
+          <section class="workspace-grid" id="memories">
+            <aside class="panel tree-panel" aria-label="记忆分类">
+              <div class="panel-header"><div><h2>记忆分类</h2><p class="panel-subtitle">L1 文件夹：类型 → 主题</p></div></div>
+              <div class="tree-list" id="memory-tree"></div>
+            </aside>
+            <div class="panel memory-panel">
+              <div class="panel-header panel-header-stack">
+                <div>
+                  <div class="panel-title-row"><h2>全部记忆</h2><span class="count-pill" id="memory-count">0</span></div>
+                  <p class="panel-subtitle">事实、偏好、目标与项目背景</p>
+                </div>
+                <div class="toolbar">
+                  <label class="search-field">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+                    <input id="search-input" type="search" placeholder="搜索记忆或原文" aria-label="搜索记忆或原文" autocomplete="off">
+                  </label>
+                  <select id="status-filter" aria-label="按状态筛选">
+                    <option value="">全部状态</option>
+                    <option value="active">有效</option>
+                    <option value="contested">冲突</option>
+                    <option value="superseded">已替代</option>
+                    <option value="retracted">已撤回</option>
+                  </select>
+                  <select id="type-filter" aria-label="按类型筛选">
+                    <option value="">全部类型</option>
+                    <option value="preference">偏好</option>
+                    <option value="fact">事实</option>
+                    <option value="goal">目标</option>
+                    <option value="project">项目</option>
+                    <option value="constraint">约束</option>
+                  </select>
+                </div>
+              </div>
+              <div class="table-head"><span>内容</span><span>状态</span><span>证据</span></div>
+              <div class="memory-list" id="memory-list" aria-live="polite"></div>
+            </div>
+
+            <aside class="panel detail-panel" id="detail-panel" aria-label="记忆详情">
+              <div class="detail-empty" id="detail-empty">
+                <div class="detail-empty-mark">01</div>
+                <h2>选择一条记忆</h2>
+                <p>查看原文证据、来源和生命周期操作。</p>
+              </div>
+              <div class="detail-content is-hidden" id="detail-content"></div>
+            </aside>
+          </section>
+        </div>
+
+        <div class="view" data-view-panel="episodes">
+          <section class="lower-grid" id="episodes">
+            <div class="panel capture-panel">
+              <div class="panel-header">
+                <div><h2>最近捕获</h2><p class="panel-subtitle">原始对话记录，不参与解释</p></div>
+                <span class="panel-meta" id="episode-count">0 条</span>
+              </div>
+              <div class="episode-list" id="episode-list"></div>
+            </div>
+            <div class="panel profile-panel">
+              <div class="panel-header"><div><h2>会话核心</h2><p class="panel-subtitle">每个 Agent 会话开始时注入</p></div><span class="read-only-badge">只读</span></div>
+              <div class="profile-body" id="profile-body">正在加载 profile.md…</div>
+              <div class="profile-foot"><span>记忆目录</span><code id="memory-home">—</code></div>
+            </div>
+          </section>
+        </div>
+
+        <div class="view" data-view-panel="diffs">
+          <section class="panel diffs-panel" id="diffs">
+            <div class="panel-header">
+              <div><div class="panel-title-row"><h2>会话变更</h2><span class="panel-meta">memory_diff</span></div><p class="panel-subtitle">只读查看每次会话归档后写入、更新或跳过了哪些记忆；技术细节仍可在详情底部展开。</p></div>
+              <span class="count-pill" id="diffs-count">0</span>
+            </div>
+            <div class="diff-tools">
+              <input id="diffs-search" type="search" placeholder="按会话或归档筛选" aria-label="按会话或归档筛选" autocomplete="off">
+              <label class="check-inline"><input type="checkbox" id="diffs-skipped-only"> 只看有跳过内容的记录</label>
+              <button class="button button-outline" id="diffs-refresh" type="button">刷新</button>
+            </div>
+            <div class="diffs-layout">
+              <div class="diffs-list" id="diffs-list"><div class="side-empty">还没有会话归档记录。新会话结束并完成归档后，这里会自动出现。</div></div>
+              <div class="diffs-detail" id="diffs-detail"><div class="side-empty">从列表选择一条归档，查看它写入和跳过了什么。</div></div>
+            </div>
+          </section>
+        </div>
+
+        <div class="view" data-view-panel="library">
+          <details class="import-fold" id="import-fold">
+            <summary><span>数据导入 · <strong id="import-fold-count">—</strong></span><span class="import-fold-hint">本机 Agent 会话与可选历史来源 · 展开管理</span></summary>
+            <div class="import-card" id="session-import-card"><div class="side-empty">正在扫描本机 Agent 会话…</div></div>
+            <div class="import-card" id="import-card"><div class="side-empty">正在检查可导入的内容…</div></div>
+          </details>
+          <section class="workspace-grid" id="library">
+            <aside class="panel tree-panel" aria-label="资料分类">
+              <div class="panel-header"><div><h2>资料分类</h2><p class="panel-subtitle">L1：来源 → 类别</p></div></div>
+              <div class="tree-list" id="library-tree"></div>
+            </aside>
+            <div class="panel library-panel">
+              <div class="panel-header">
+                <div><div class="panel-title-row"><h2>资料库</h2><span class="count-pill" id="library-count">0</span></div>
+                <p class="panel-subtitle">L0 摘要列表 · 选中条目查看 L2 正文</p></div>
+              </div>
+              <div class="library-tools">
+                <input id="library-search" type="search" placeholder="搜索资料库，例如：项目决策、偏好变化" aria-label="搜索资料库" autocomplete="off">
+              </div>
+              <div class="library-list" id="library-list"><div class="side-empty">正在加载资料…</div></div>
+            </div>
+            <aside class="panel detail-panel" id="library-detail-panel">
+              <div class="detail-empty" id="library-detail-empty">
+                <div class="detail-empty-mark">L2</div>
+                <h2>选择一篇资料</h2>
+                <p>从列表选中一篇资料，在这里查看完整正文。</p>
+              </div>
+              <div class="detail-content is-hidden" id="library-detail-content"></div>
+            </aside>
+          </section>
+        </div>
+
+        <div class="view" data-view-panel="agents">
+          <section class="panel agents-panel" id="agents">
+            <div class="panel-header">
+              <div><h2>Agent 接入</h2><p class="panel-subtitle">自动扫描本机已安装的 Agent。能改的一键接入，受保护的复制提示词给它自己配置</p></div>
+              <div class="panel-header-actions">
+                <button class="button button-outline" id="agents-copy-all" type="button">导出全部提示词</button>
+                <button class="button button-outline" id="agents-scan-button" type="button">重新扫描</button>
+              </div>
+            </div>
+            <div class="agent-grid" id="agent-grid"><div class="side-empty">正在扫描本机…</div></div>
+          </section>
+        </div>
+
+        <div class="view" data-view-panel="model">
+          <section class="panel model-panel" id="model">
+            <div class="panel-header"><div><h2>模型连接</h2><p class="panel-subtitle">模型只通过本地后台调用</p></div><span class="status-badge status-superseded" id="model-status-badge">未检查</span></div>
+            <div class="model-body">
+              <div class="model-primary"><span class="model-dot" id="model-dot"></span><div><strong id="model-name">正在读取配置</strong><span id="model-format">—</span></div></div>
+              <dl class="model-details"><div><dt>接口格式</dt><dd id="model-api-format">—</dd></div><div><dt>API Key</dt><dd id="model-key-status">—</dd></div><div><dt>超时</dt><dd id="model-timeout">—</dd></div><div><dt>Embedding</dt><dd id="model-embedding">—</dd></div></dl>
+              <button class="button button-outline model-test-button" id="model-test-button" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v4m0 10v4M3 12h4m10 0h4M5.6 5.6l2.8 2.8m7.2 7.2 2.8 2.8m0-12.8-2.8 2.8m-7.2 7.2-2.8 2.8"/></svg><span>测试模型连接</span></button>
+              <p class="model-result" id="model-result">连接状态会在这里显示。</p>
+              <details class="model-config" id="model-config"><summary>配置或更换模型</summary>
+                <form id="model-config-form">
+                  <div class="config-grid"><label class="config-field"><span>接口格式</span><select id="model-config-format" name="format"><option value="openai">OpenAI 兼容</option><option value="anthropic">Anthropic</option></select></label><label class="config-field"><span>超时（秒）</span><input id="model-config-timeout" name="timeout" type="number" min="1" max="300" step="1" value="30"></label></div>
+                  <label class="config-field"><span>接口地址</span><input id="model-config-base-url" name="base_url" type="url" placeholder="https://api.example.com/v1" required></label>
+                  <label class="config-field"><span>模型名称</span><input id="model-config-model" name="model" type="text" placeholder="例如 gpt-4o-mini" required></label>
+                  <label class="config-field"><span>API Key <small>留空保持现有 Key</small></span><input id="model-config-key" name="api_key" type="password" autocomplete="new-password" placeholder="不会回显已保存的 Key"></label>
+                  <label class="config-clear"><input id="model-config-clear-key" name="clear_api_key" type="checkbox" value="true"><span>清除已保存的 API Key</span></label>
+                  <button class="button button-dark config-submit" type="submit">保存模型配置</button>
+                </form>
+              </details>
+            </div>
+          </section>
+
+          <section class="panel model-panel" id="embedding">
+            <div class="panel-header"><div><h2>Embedding 连接</h2><p class="panel-subtitle">语义检索用；留空则退回全文检索</p></div><span class="status-badge status-superseded" id="embedding-status-badge">未检查</span></div>
+            <div class="model-body">
+              <div class="model-primary"><span class="model-dot" id="embedding-dot"></span><div><strong id="embedding-name">正在读取配置</strong><span id="embedding-format">—</span></div></div>
+              <dl class="model-details"><div><dt>模型名称</dt><dd id="embedding-model">—</dd></div><div><dt>API Key</dt><dd id="embedding-key-status">—</dd></div><div><dt>超时</dt><dd id="embedding-timeout">—</dd></div><div><dt>检索模式</dt><dd id="embedding-mode">—</dd></div></dl>
+              <button class="button button-outline model-test-button" id="embedding-test-button" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v4m0 10v4M3 12h4m10 0h4M5.6 5.6l2.8 2.8m7.2 7.2l2.8 2.8m0-12.8-2.8 2.8m-7.2 7.2-2.8 2.8"/></svg><span>测试 Embedding 连接</span></button>
+              <p class="model-result" id="embedding-result">连接状态会在这里显示。</p>
+              <details class="model-config" id="embedding-config"><summary>配置或更换 Embedding 模型</summary>
+                <form id="embedding-config-form">
+                  <div class="config-grid"><label class="config-field"><span>超时（秒）</span><input id="embedding-config-timeout" name="timeout" type="number" min="1" max="300" step="1" value="20"></label><label class="config-field"><span>模型名称</span><input id="embedding-config-model" name="model" type="text" placeholder="例如 text-embedding-3-small"></label></div>
+                  <label class="config-field"><span>接口地址 <small>留空则关闭语义检索</small></span><input id="embedding-config-base-url" name="base_url" type="url" placeholder="https://api.example.com/v1"></label>
+                  <label class="config-field"><span>API Key <small>留空保持现有 Key</small></span><input id="embedding-config-key" name="api_key" type="password" autocomplete="new-password" placeholder="不会回显已保存的 Key"></label>
+                  <label class="config-clear"><input id="embedding-config-clear-key" name="clear_api_key" type="checkbox" value="true"><span>清除已保存的 API Key</span></label>
+                  <p class="model-hint">更换 Embedding 模型后需要重新索引：<code>uv run membrain reindex</code></p>
+                  <button class="button button-dark config-submit" type="submit">保存 Embedding 配置</button>
+                </form>
+              </details>
+            </div>
+          </section>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="action-dialog">
+    <form method="dialog" class="dialog-card" id="action-form">
+      <button class="dialog-close" id="dialog-close" type="button" aria-label="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+      <p class="eyebrow" id="dialog-eyebrow">MEMORY ACTION</p>
+      <h2 id="dialog-title">添加记忆</h2>
+      <p class="dialog-copy" id="dialog-copy">只保存你亲自输入的内容，并保留原文作为证据。</p>
+      <div id="dialog-fields"></div>
+      <div class="dialog-actions"><button class="button button-outline" id="dialog-cancel" value="cancel" type="button">取消</button><button class="button button-dark" id="dialog-submit" value="default" type="submit">保存</button></div>
+    </form>
+  </dialog>
+  <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

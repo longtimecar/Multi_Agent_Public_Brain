@@ -1,0 +1,47 @@
+# ── Your memory: canonical data and working state ───────────────────────
+# Everything under memory/ is personal — real conversations, facts, and the
+# profile. It is never committed. The library creates the tree on
+# `membrain init`, so a fresh clone starts empty.
+memory/
+
+# ── Local tooling state ────────────────────────────────────────────────
+.state/
+.workbuddy/
+.pytest_cache/
+*.bak
+*.bak-*
+
+# ── Browser profile used for dashboard checks (holds cookies and saved
+#    login data — never commit) ─────────────────────────────────────────
+.edge-check/
+
+# ── Build output ───────────────────────────────────────────────────────
+dist/
+build/
+*.egg-info/
+
+# ── Python ─────────────────────────────────────────────────────────────
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# ── Secrets ────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Machine-specific wiring ────────────────────────────────────────────
+# .mcp.json points at your own interpreter and memory path.
+# Use .mcp.json.example as the template instead.
+.mcp.json
+.mcp.json.*
+!.mcp.json.example
+.dashboard-check-*.png
+
+# ── Repo-local material that is not part of the project ────────────────
+promo_membrain_20261031/
+reference_materials/
+content_directions/
+docs/backups/
+docs/evidence/

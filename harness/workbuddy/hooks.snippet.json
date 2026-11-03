@@ -1,0 +1,52 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"<PROJECT>/.venv/Scripts/python.exe\" \"<PROJECT>/scripts/harness_hook.py\" workbuddy session-start",
+            "timeout": 30,
+            "statusMessage": "membrain"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"<PROJECT>/.venv/Scripts/python.exe\" \"<PROJECT>/scripts/harness_hook.py\" workbuddy prompt-submit",
+            "timeout": 30,
+            "statusMessage": "membrain"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"<PROJECT>/.venv/Scripts/python.exe\" \"<PROJECT>/scripts/harness_hook.py\" workbuddy precompact",
+            "timeout": 30,
+            "statusMessage": "membrain"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"<PROJECT>/.venv/Scripts/python.exe\" \"<PROJECT>/scripts/harness_hook.py\" workbuddy capture",
+            "timeout": 30,
+            "statusMessage": "membrain"
+          }
+        ]
+      }
+    ]
+  }
+}
