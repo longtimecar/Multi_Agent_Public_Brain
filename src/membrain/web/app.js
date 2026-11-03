@@ -559,7 +559,12 @@ async function sendChat(event) {
     try { localStorage.setItem('membrain.lastMemory', JSON.stringify(state.chat.memory)); } catch { /* storage may be disabled */ }
     renderChat();
     renderMemorySources();
-    notify(`已回答 · 召回 ${state.chat.memory.length} 条记忆`);
+    if (result.memory_action?.ok) {
+      notify(result.memory_action.action === 'correct' ? '记忆已更正并生效' : '记忆已撤回');
+      await loadData();
+    } else {
+      notify(`已回答 · 召回 ${state.chat.memory.length} 条记忆`);
+    }
   } catch (error) {
     state.chat.messages.pop();
     input.value = message;

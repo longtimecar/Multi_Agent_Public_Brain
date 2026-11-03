@@ -282,6 +282,54 @@ def test_dashboard_chat_and_model_status_keep_assistant_out_of_memory_evidence(t
         service.index.close()
 
 
+def test_dashboard_chat_corrects_a_memory_only_from_matching_user_evidence(tmp_path):
+    from test_core import make_settings, write
+
+    service = MemoryService(make_settings(tmp_path))
+    fact = write(service.store, "Prefers tea", "drink", FactType.PREFERENCE, quote="I prefer tea.")
+    service.retriever.sync_fact(fact)
+    fake = FakeLLMClient([{"action": "correct", "memory_id": fact.id,
+                           "replacement_claim": "Prefers coffee"}])
+    runtime = DashboardRuntime(service, llm_client=fake, auto_extract_chat=False)
+    try:
+        result = runtime.chat(
+            "Correct this memory: I no longer drink tea; I prefer coffee.",
+            session_id="chat-correction",
+        )
+        assert result["memory_action"]["ok"] and result["memory_action"]["action"] == "correct"
+        assert "已更正" in result["answer"]
+        assert service.store.get_fact(fact.id).status.value == "superseded"
+        replacement = service.store.get_fact(result["memory_action"]["replacement_id"])
+        assert replacement.claim == "Prefers coffee" and replacement.is_live
+        assert replacement.evidence[0].episode == result["episode_id"]
+        assert len(fake.calls) == 1  # planner only; the confirmation is deterministic
+    finally:
+        service.index.close()
+
+
+def test_dashboard_chat_retracts_a_memory_and_does_not_guess_on_ambiguity(tmp_path):
+    from test_core import make_settings, write
+
+    service = MemoryService(make_settings(tmp_path))
+    fact = write(service.store, "Prefers tea", "drink", FactType.PREFERENCE, quote="I like tea.")
+    service.retriever.sync_fact(fact)
+    runtime = DashboardRuntime(service, llm_client=FakeLLMClient([
+        {"action": "none"},
+        {"action": "retract", "memory_id": fact.id},
+    ]), auto_extract_chat=False)
+    try:
+        ambiguous = runtime.chat("Correct this memory: tea.", session_id="chat-ambiguous")
+        assert "没有执行更改" in ambiguous["answer"]
+        assert ambiguous["memory_action"] is None
+        assert service.store.get_fact(fact.id).is_live
+
+        removed = runtime.chat("Retract this memory: I no longer like tea.", session_id="chat-retract")
+        assert removed["memory_action"]["ok"] and removed["memory_action"]["action"] == "retract"
+        assert service.store.get_fact(fact.id).status.value == "retracted"
+    finally:
+        service.index.close()
+
+
 def test_dashboard_general_preference_question_supplies_saved_memory_to_model(tmp_path):
     from test_core import make_settings, write
 
