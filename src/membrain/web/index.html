@@ -175,26 +175,17 @@
         </div>
 
         <div class="view" data-view-panel="memories">
-          <section class="workspace-grid" id="memories">
-            <aside class="panel tree-panel" aria-label="记忆分类">
-              <div class="panel-header"><div><h2>记忆分类</h2><p class="panel-subtitle">L1 文件夹：类型 → 主题</p></div></div>
-              <div class="tree-list" id="memory-tree"></div>
-            </aside>
+          <section class="workspace-grid memory-workspace" id="memories">
             <div class="panel memory-panel">
               <div class="panel-header panel-header-stack">
                 <div>
-                  <div class="panel-title-row"><h2>全部记忆</h2><span class="count-pill" id="memory-count">0</span>
-                    <button class="memory-tree-toggle" id="memory-tree-toggle" type="button" aria-controls="memory-tree" aria-expanded="true" aria-label="收起记忆分类">
-                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M4 12h10M4 18h10M18 8l-3 3 3 3"/></svg>
-                      <span>收起分类</span>
-                    </button>
-                  </div>
-                  <p class="panel-subtitle">默认显示最近写入，搜索和筛选会覆盖全部记忆</p>
+                  <div class="panel-title-row"><h2>全部记忆</h2><span class="count-pill" id="memory-count">0</span></div>
+                  <p class="panel-subtitle">按 L1 文件夹逐层浏览；进入主题后显示 L0 摘要，点条目查看 L2 正文</p>
                 </div>
                 <div class="toolbar">
                   <label class="search-field">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
-                    <input id="search-input" type="search" placeholder="搜索记忆或原文" aria-label="搜索记忆或原文" autocomplete="off">
+                    <input id="search-input" type="search" placeholder="搜索全部记忆或原文" aria-label="搜索全部记忆或原文" autocomplete="off">
                   </label>
                   <select id="status-filter" aria-label="按状态筛选">
                     <option value="">全部状态</option>
@@ -203,23 +194,23 @@
                     <option value="superseded">已替代</option>
                     <option value="retracted">已撤回</option>
                   </select>
-                  <select id="type-filter" aria-label="按类型筛选">
-                    <option value="">全部类型</option>
-                    <option value="preference">偏好</option>
-                    <option value="fact">事实</option>
-                    <option value="goal">目标</option>
-                    <option value="project">项目</option>
-                    <option value="constraint">约束</option>
-                  </select>
                 </div>
               </div>
-              <div class="table-head"><span>内容</span><span>状态</span><span>证据</span></div>
+              <div class="memory-pathbar">
+                <button class="memory-back" id="memory-back" type="button" aria-label="返回上一级" disabled>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg>
+                </button>
+                <nav class="memory-breadcrumb" id="memory-breadcrumb" aria-label="记忆文件夹路径"></nav>
+                <span class="memory-layer-legend">L1 分类 · L0 摘要 · L2 正文</span>
+              </div>
+              <div class="memory-folder-view" id="memory-folder-view" aria-live="polite"><div class="side-empty">正在整理文件夹…</div></div>
+              <div class="table-head" id="memory-table-head"><span>L0 摘要</span><span>状态</span><span>证据</span></div>
               <div class="memory-list" id="memory-list" aria-live="polite"></div>
             </div>
 
             <aside class="panel detail-panel is-hidden" id="detail-panel" aria-label="记忆详情">
               <div class="detail-empty" id="detail-empty">
-                <div class="detail-empty-mark">01</div>
+                <div class="detail-empty-mark">L2</div>
                 <h2>选择一条记忆</h2>
                 <p>查看原文证据、来源和生命周期操作。</p>
               </div>
