@@ -1,4 +1,4 @@
-const state = { facts: [], factTotal: null, factsTruncated: false, selected: null, episodes: [], filters: { q: '', status: '', type: '' }, tree: { type: '', subject: '' }, currentView: 'chat', dialog: null, sourceLabels: {},
+const state = { facts: [], factTotal: null, factsTruncated: false, selected: null, episodes: [], episodeTotal: 0, episodeAgent: '', filters: { q: '', status: '', type: '' }, tree: { type: '', subject: '' }, currentView: 'chat', dialog: null, sourceLabels: {},
   memoryLimit: 8, chat: { sessionId: null, messages: [], memory: [], sending: false }, model: null };
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -224,10 +224,13 @@ function memoryGroups() {
 
 function memoryMode() {
   if (state.filters.q) return 'search';
-  if (state.filters.status) return 'filter';
   if (state.tree.subject) return 'entries';
   if (state.tree.type) return 'subjects';
   return 'types';
+}
+
+function memoryStatusLabel() {
+  return { active: '当前有效', contested: '待处理冲突', superseded: '已替代', retracted: '已撤回' }[state.filters.status] || '状态筛选';
 }
 
 function memoryPath(mode) {
@@ -238,19 +241,25 @@ function memoryPath(mode) {
   let html = '<button class="memory-crumb" type="button" data-memory-root>全部记忆</button>';
   if (mode === 'search') {
     html += `<span class="memory-crumb-sep">/</span><span class="memory-crumb is-current">搜索结果</span>`;
-  } else if (mode === 'filter') {
-    const filterLabel = state.filters.status === 'contested' ? '待处理冲突' : '状态筛选';
-    html += `<span class="memory-crumb-sep">/</span><span class="memory-crumb is-current">${filterLabel}</span>`;
-  } else if (mode === 'subjects' || mode === 'entries') {
-    html += `<span class="memory-crumb-sep">/</span>`;
-    html += mode === 'entries'
-      ? `<button class="memory-crumb" type="button" data-memory-type="${escapeHtml(state.tree.type)}">${escapeHtml(typeLabel)}</button><span class="memory-crumb-sep">/</span><span class="memory-crumb is-current">${escapeHtml(state.tree.subject)}</span>`
-      : `<span class="memory-crumb is-current">${escapeHtml(typeLabel)}</span>`;
+  } else {
+    if (state.filters.status) {
+      html += `<span class="memory-crumb-sep">/</span>`;
+      html += state.tree.type
+        ? `<button class="memory-crumb" type="button" data-memory-status>${escapeHtml(memoryStatusLabel())}</button>`
+        : `<span class="memory-crumb is-current">${escapeHtml(memoryStatusLabel())}</span>`;
+    }
+    if (mode === 'subjects' || mode === 'entries') {
+      html += `<span class="memory-crumb-sep">/</span>`;
+      html += mode === 'entries'
+        ? `<button class="memory-crumb" type="button" data-memory-type="${escapeHtml(state.tree.type)}">${escapeHtml(typeLabel)}</button><span class="memory-crumb-sep">/</span><span class="memory-crumb is-current">${escapeHtml(state.tree.subject)}</span>`
+        : `<span class="memory-crumb is-current">${escapeHtml(typeLabel)}</span>`;
+    }
   }
   root.innerHTML = html;
   if (back) {
-    back.disabled = mode === 'types';
-    back.title = mode === 'types' ? '已经在最上层' : '返回上一级';
+    const atTop = mode === 'types' && !state.filters.status;
+    back.disabled = atTop;
+    back.title = atTop ? '已经在最上层' : '返回上一级';
   }
 }
 
@@ -354,8 +363,10 @@ function clearMemoryFilters() {
 }
 
 function memoryGoBack() {
-  if (state.filters.q || state.filters.status || state.filters.type) {
-    clearMemoryFilters();
+  if (state.filters.q) {
+    state.filters.q = '';
+    $('#search-input').value = '';
+    resetMemoryLimit();
     loadData();
     return;
   }
@@ -363,6 +374,12 @@ function memoryGoBack() {
     state.tree.subject = '';
   } else if (state.tree.type) {
     state.tree = { type: '', subject: '' };
+  } else if (state.filters.status) {
+    state.filters.status = '';
+    $('#status-filter').value = '';
+    resetMemoryLimit();
+    loadData();
+    return;
   }
   resetMemoryLimit();
   state.selected = null;
@@ -370,10 +387,70 @@ function memoryGoBack() {
   renderDetail(null);
 }
 
+function isTechnicalEpisode(episode) {
+  return /^\s*<(?:task-notification|message_quote|user_info|project_context)\b/i.test(String(episode.text || ''));
+}
+
 function renderEpisodes() {
-  $('#episode-count').textContent = `${state.episodes.length} 条`;
-  $('#episode-list').innerHTML = state.episodes.length ? state.episodes.map((episode) => `
-    <div class="episode-row"><span class="episode-dot"></span><time class="episode-time">${formatTime(episode.ts)}</time><span class="episode-text" title="${escapeHtml(episode.text)}">${escapeHtml(episode.text)}</span></div>`).join('') : '<div class="empty-state"><h3>还没有捕获记录</h3><p>Agent 产生新对话后，原始用户回合会出现在这里。</p></div>';
+  const grid = $('#episode-agent-grid');
+  const list = $('#episode-list');
+  const breadcrumb = $('#episode-breadcrumb');
+  const back = $('#episode-back');
+  if (!grid || !list) return;
+  const loaded = state.episodes || [];
+  const episodes = loaded.filter((episode) => !isTechnicalEpisode(episode));
+  const hiddenCount = loaded.length - episodes.length;
+  const selectedAgent = state.episodeAgent;
+  $('#episode-count').textContent = `${episodes.length} 条`;
+  $('#episode-count').title = hiddenCount ? `已隐藏 ${hiddenCount} 条系统通知` : '';
+
+  breadcrumb.innerHTML = '<button class="memory-crumb" type="button" data-episode-root>最近捕获</button>'
+    + (selectedAgent ? `<span class="memory-crumb-sep">/</span><span class="memory-crumb is-current">${escapeHtml(displaySource(selectedAgent))}</span>` : '');
+  back.disabled = !selectedAgent;
+
+  if (!episodes.length) {
+    grid.innerHTML = '<div class="empty-state"><h3>还没有捕获记录</h3><p>Agent 产生新对话后，原始用户回合会出现在这里。</p></div>';
+    grid.classList.remove('is-hidden');
+    list.classList.add('is-hidden');
+    list.innerHTML = '';
+    return;
+  }
+
+  const groups = new Map();
+  for (const episode of episodes) {
+    const agent = episode.agent || 'unknown';
+    const group = groups.get(agent) || { count: 0, latest: '', preview: '' };
+    group.count += 1;
+    if (!group.latest || String(episode.ts) > group.latest) {
+      group.latest = String(episode.ts || '');
+      group.preview = String(episode.text || '');
+    }
+    groups.set(agent, group);
+  }
+
+  if (!selectedAgent) {
+    grid.classList.remove('is-hidden');
+    list.classList.add('is-hidden');
+    list.innerHTML = '';
+    const rows = [...groups.entries()].sort((a, b) => b[1].count - a[1].count || displaySource(a[0]).localeCompare(displaySource(b[0]), 'zh'));
+    grid.innerHTML = `<div class="memory-folder-head"><div><span class="memory-folder-level">Agent</span><h3>选择一个来源</h3><p>只展示最近 ${episodes.length} 条捕获；进入后查看该 Agent 的原始回合。</p></div><span class="memory-folder-total">${rows.length} 个 Agent · ${episodes.length} 条</span></div>
+      <div class="episode-agent-list">${rows.map(([agent, group]) => `
+        <button class="memory-subject-folder episode-agent-folder" type="button" data-episode-agent="${escapeHtml(agent)}">
+          <span class="memory-subject-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="7" width="14" height="11" rx="3"/><path d="M9 12h.01M15 12h.01M9 15h6M12 4v3"/></svg></span>
+          <span class="memory-subject-copy"><strong>${escapeHtml(displaySource(agent))}</strong><small>${escapeHtml(formatTime(group.latest))} · ${escapeHtml(shortToken(group.preview, 42))}</small></span>
+          <span class="memory-subject-count">${group.count}</span>
+          <span class="memory-subject-arrow" aria-hidden="true">→</span>
+        </button>`).join('')}</div>`;
+    return;
+  }
+
+  grid.classList.add('is-hidden');
+  list.classList.remove('is-hidden');
+  const rows = episodes.filter((episode) => (episode.agent || 'unknown') === selectedAgent);
+  $('#episode-count').textContent = `${rows.length} 条`;
+  list.innerHTML = rows.length ? rows.map((episode) => `
+    <div class="episode-row"><span class="episode-dot"></span><time class="episode-time">${formatTime(episode.ts)}</time><span class="episode-text" title="${escapeHtml(episode.text)}">${escapeHtml(episode.text)}</span></div>`).join('')
+    : '<div class="empty-state"><h3>这个 Agent 没有捕获记录</h3><p>换一个来源或等待新的对话。</p></div>';
 }
 
 function renderDetail(fact) {
@@ -414,7 +491,7 @@ async function loadData() {
   if (state.filters.status) params.set('status', state.filters.status);
   if (state.filters.type) params.set('type', state.filters.type);
   const settled = await Promise.allSettled([
-    fetchJson('/api/overview'), fetchJson(`/api/facts?${params.toString()}`), fetchJson('/api/episodes?limit=24'), fetchJson('/api/model'),
+    fetchJson('/api/overview'), fetchJson(`/api/facts?${params.toString()}`), fetchJson('/api/episodes?limit=100'), fetchJson('/api/model'),
   ]);
   const [overviewResult, factsResult, episodesResult, modelResult] = settled;
   const failures = settled.filter((result) => result.status === 'rejected');
@@ -429,7 +506,10 @@ async function loadData() {
     state.factTotal = Number.isFinite(facts.count) ? facts.count : state.facts.length;
     state.factsTruncated = Boolean(facts.truncated);
   }
-  if (episodes) state.episodes = episodes.items || [];
+  if (episodes) {
+    state.episodes = episodes.items || [];
+    state.episodeTotal = Number.isFinite(episodes.count) ? episodes.count : state.episodes.length;
+  }
   if (facts || episodes) { renderFacts(); renderEpisodes(); }
   if (state.selected) {
     const updated = state.facts.find((fact) => fact.id === state.selected.id);
@@ -1089,6 +1169,9 @@ function switchView(name, opts = {}) {
     $('#search-input').value = '';
     resetMemoryLimit();
     renderDetail(null);
+  } else if (name === 'episodes') {
+    state.episodeAgent = '';
+    state.filters.status = '';
   } else if (opts.status) {
     state.filters.status = opts.status;
   } else {
@@ -1153,9 +1236,7 @@ function bind() {
     const subjectButton = event.target.closest('[data-folder-subject]');
     if (!typeButton && !subjectButton) return;
     state.filters.q = '';
-    state.filters.status = '';
     $('#search-input').value = '';
-    $('#status-filter').value = '';
     state.tree = subjectButton
       ? { type: state.tree.type, subject: subjectButton.dataset.folderSubject || '' }
       : { type: typeButton.dataset.folderType || '', subject: '' };
@@ -1167,6 +1248,7 @@ function bind() {
   $('#memory-breadcrumb')?.addEventListener('click', (event) => {
     const rootButton = event.target.closest('[data-memory-root]');
     const typeButton = event.target.closest('[data-memory-type]');
+    const statusButton = event.target.closest('[data-memory-status]');
     if (rootButton) {
       clearMemoryFilters();
       state.tree = { type: '', subject: '' };
@@ -1174,6 +1256,12 @@ function bind() {
       state.selected = null;
       renderDetail(null);
       loadData();
+    } else if (statusButton) {
+      state.tree = { type: '', subject: '' };
+      state.selected = null;
+      resetMemoryLimit();
+      renderDetail(null);
+      renderFacts();
     } else if (typeButton) {
       state.tree.subject = '';
       state.selected = null;
@@ -1183,6 +1271,21 @@ function bind() {
     }
   });
   $('#memory-back')?.addEventListener('click', memoryGoBack);
+  $('#episode-agent-grid')?.addEventListener('click', (event) => {
+    const agentButton = event.target.closest('[data-episode-agent]');
+    if (!agentButton) return;
+    state.episodeAgent = agentButton.dataset.episodeAgent || '';
+    renderEpisodes();
+  });
+  $('#episode-breadcrumb')?.addEventListener('click', (event) => {
+    if (!event.target.closest('[data-episode-root]')) return;
+    state.episodeAgent = '';
+    renderEpisodes();
+  });
+  $('#episode-back')?.addEventListener('click', () => {
+    state.episodeAgent = '';
+    renderEpisodes();
+  });
   $('#diffs-refresh')?.addEventListener('click', () => loadDiffs());
   $('#import-fold')?.addEventListener('toggle', (event) => {
     if (event.target.open && !state.lib.importLoaded) loadImport();

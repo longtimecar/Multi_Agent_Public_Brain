@@ -35,6 +35,8 @@ def test_existing_episode_filter_removes_injected_material():
     assert clean_turn("real <personal_memory>fake</personal_memory> text") == "real  text"
     assert clean_turn("<system-reminder>incomplete") == ""
     assert clean_turn("/compact") == ""
+    assert clean_turn("<task-notification><task-id>x</task-id></task-notification>") == ""
+    assert clean_turn("<task-notification>noise</task-notification>real question") == "real question"
 
 
 def test_prompt_is_recorded_once_even_when_the_transcript_pass_sees_it_later(tmp_path):
@@ -43,6 +45,8 @@ def test_prompt_is_recorded_once_even_when_the_transcript_pass_sees_it_later(tmp
     assert record_prompt(svc, "session", "claude-code", "我对花生过敏")
     assert not record_prompt(svc, "session", "claude-code", "   ")
     assert not record_prompt(svc, "unknown", "claude-code", "no session id")
+    assert not record_prompt(svc, "session", "workbuddy",
+                             "<task-notification><task-id>x</task-id></task-notification>")
     # The Stop-hook transcript pass delivers the same message, with surrounding whitespace.
     from datetime import datetime, timezone
     turns = [("user", "我对花生过敏 ", "uuid-1", datetime.now(timezone.utc)),

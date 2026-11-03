@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 
 _INJECTED_BLOCK = re.compile(
-    r"<(memory|personal_memory|system-reminder|local-command-stdout|command-name|command-message|command-args|bash-input|bash-stdout|bash-stderr)\b[^>]*>.*?(?:</\1\s*>|\Z)",
+    r"<(memory|personal_memory|system-reminder|local-command-stdout|command-name|command-message|command-args|bash-input|bash-stdout|bash-stderr|task-notification|message_quote|user_info|project_context)\b[^>]*>.*?(?:</\1\s*>|\Z)",
     re.IGNORECASE | re.DOTALL,
 )
 

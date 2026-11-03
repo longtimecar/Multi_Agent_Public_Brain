@@ -223,10 +223,18 @@
           <section class="lower-grid" id="episodes">
             <div class="panel capture-panel">
               <div class="panel-header">
-                <div><h2>最近捕获</h2><p class="panel-subtitle">原始对话记录，不参与解释</p></div>
+                <div><h2>最近捕获</h2><p class="panel-subtitle">原始对话记录，不参与解释；按 Agent 分组浏览</p></div>
                 <span class="panel-meta" id="episode-count">0 条</span>
               </div>
-              <div class="episode-list" id="episode-list"></div>
+              <div class="episode-pathbar">
+                <button class="memory-back" id="episode-back" type="button" aria-label="返回全部捕获" disabled>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg>
+                </button>
+                <nav class="memory-breadcrumb" id="episode-breadcrumb" aria-label="捕获记录路径"></nav>
+                <span class="capture-scope-note">最近 100 条 · 已隐藏系统通知</span>
+              </div>
+              <div class="episode-agent-grid" id="episode-agent-grid" aria-live="polite"></div>
+              <div class="episode-list" id="episode-list" aria-live="polite"></div>
             </div>
             <div class="panel profile-panel">
               <div class="panel-header"><div><h2>会话核心</h2><p class="panel-subtitle">每个 Agent 会话开始时注入</p></div><span class="read-only-badge">只读</span></div>

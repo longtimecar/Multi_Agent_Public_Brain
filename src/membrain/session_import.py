@@ -27,6 +27,7 @@ from .archive import ArchiveEntry, CATEGORY_LABELS, content_hash, entry_id, make
 from .llm import LLMError
 from .models import Evidence, FactType
 from .store import _atomic_write
+from .text import clean_turn
 
 HOME = Path.home()
 MAX_BODY = 120_000
@@ -260,7 +261,7 @@ def _parse_workbuddy(path: Path) -> list[tuple[str, str]]:
                          if isinstance(p, dict) and p.get("type") in ("input_text", "output_text", "text")).strip()
         if role == "user":
             # injected context is not user-typed evidence; drop it, keep the query body
-            text = _USER_TAG.sub("", _SYSREM.sub("", text)).strip()
+            text = clean_turn(_USER_TAG.sub("", _SYSREM.sub("", text))).strip()
         if not text:
             continue
         turns.append((str(role), _clip(text, MAX_TURN)))
