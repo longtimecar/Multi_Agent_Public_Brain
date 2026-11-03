@@ -681,3 +681,55 @@ dialog, .dialog-card { border-radius: 16px; }
   .stat-card strong { font-size: 28px; }
   .stat-foot { font-size: 9.5px; }
 }
+
+/* Compact memory browser */
+.memory-tree-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  margin-left: auto;
+  border: 1px solid #d8e2da;
+  border-radius: 7px;
+  background: #fbfdf9;
+  color: #65736c;
+  padding: 0 9px;
+  font-size: 10px;
+  font-weight: 650;
+  white-space: nowrap;
+  transition: border-color .16s ease, color .16s ease, background .16s ease;
+}
+.memory-tree-toggle:hover { border-color: #b8cbbf; background: #fff; color: var(--ink); }
+.memory-tree-toggle svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.memory-panel .panel-header-stack { display: block; }
+.memory-panel .toolbar { margin-top: 14px; justify-content: flex-start; }
+.memory-panel .search-field { flex: 1 1 280px; width: auto; max-width: 360px; }
+.workspace-grid:not(.has-detail) { grid-template-columns: 210px minmax(0, 1fr); }
+.workspace-grid.is-tree-collapsed { grid-template-columns: minmax(0, 1.7fr) minmax(310px, .68fr); }
+.workspace-grid.is-tree-collapsed .tree-panel { display: none; }
+.workspace-grid.is-tree-collapsed:not(.has-detail) { grid-template-columns: minmax(0, 1fr); }
+.detail-close { flex: none; }
+.memory-more {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid #e7ede7;
+  background: #fafcf8;
+  padding: 13px 20px;
+  color: #7b8881;
+  font-size: 11px;
+}
+.memory-more .button { min-height: 32px; font-size: 11px; }
+@media (max-width: 1120px) {
+  .workspace-grid, .workspace-grid:not(.has-detail), .workspace-grid.is-tree-collapsed,
+  .workspace-grid.is-tree-collapsed:not(.has-detail) { grid-template-columns: minmax(0, 1fr); }
+  .memory-panel .search-field { max-width: none; }
+}
+@media (max-width: 760px) {
+  .memory-panel .panel-header-stack { display: block; }
+  .memory-panel .toolbar { margin-top: 12px; }
+  .memory-panel .search-field { flex: 1 1 100%; width: 100%; max-width: none; }
+  .memory-tree-toggle { min-height: 30px; padding-inline: 8px; }
+  .memory-more { padding-inline: 15px; }
+}

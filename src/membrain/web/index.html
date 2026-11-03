@@ -183,8 +183,13 @@
             <div class="panel memory-panel">
               <div class="panel-header panel-header-stack">
                 <div>
-                  <div class="panel-title-row"><h2>全部记忆</h2><span class="count-pill" id="memory-count">0</span></div>
-                  <p class="panel-subtitle">事实、偏好、目标与项目背景</p>
+                  <div class="panel-title-row"><h2>全部记忆</h2><span class="count-pill" id="memory-count">0</span>
+                    <button class="memory-tree-toggle" id="memory-tree-toggle" type="button" aria-controls="memory-tree" aria-expanded="true" aria-label="收起记忆分类">
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M4 12h10M4 18h10M18 8l-3 3 3 3"/></svg>
+                      <span>收起分类</span>
+                    </button>
+                  </div>
+                  <p class="panel-subtitle">默认显示最近写入，搜索和筛选会覆盖全部记忆</p>
                 </div>
                 <div class="toolbar">
                   <label class="search-field">
@@ -212,7 +217,7 @@
               <div class="memory-list" id="memory-list" aria-live="polite"></div>
             </div>
 
-            <aside class="panel detail-panel" id="detail-panel" aria-label="记忆详情">
+            <aside class="panel detail-panel is-hidden" id="detail-panel" aria-label="记忆详情">
               <div class="detail-empty" id="detail-empty">
                 <div class="detail-empty-mark">01</div>
                 <h2>选择一条记忆</h2>

@@ -1,4 +1,9 @@
+const storedTreeState = (() => {
+  try { return localStorage.getItem('membrain.memoryTreeCollapsed'); } catch { return null; }
+})();
 const state = { facts: [], factTotal: null, factsTruncated: false, selected: null, episodes: [], filters: { q: '', status: '', type: '' }, tree: { type: '', subject: '' }, treeOpen: {}, currentView: 'chat', dialog: null, sourceLabels: {},
+  memoryLimit: 8,
+  memoryTreeCollapsed: storedTreeState === null ? true : storedTreeState === '1',
   chat: { sessionId: null, messages: [], memory: [], sending: false }, model: null };
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -247,17 +252,45 @@ function renderTree() {
   root.innerHTML = html || '<div class="side-empty">暂无记忆。</div>';
 }
 
+function applyMemoryTreeState() {
+  const grid = $('#memories');
+  const toggle = $('#memory-tree-toggle');
+  if (!grid || !toggle) return;
+  grid.classList.toggle('is-tree-collapsed', state.memoryTreeCollapsed);
+  toggle.setAttribute('aria-expanded', String(!state.memoryTreeCollapsed));
+  toggle.setAttribute('aria-label', state.memoryTreeCollapsed ? '显示记忆分类' : '收起记忆分类');
+  toggle.querySelector('span').textContent = state.memoryTreeCollapsed ? '显示分类' : '收起分类';
+}
+
+function resetMemoryLimit() {
+  state.memoryLimit = 8;
+}
+
 function renderFacts() {
   const list = $('#memory-list');
   const rows = state.facts.filter((fact) => (!state.tree.type || fact.type === state.tree.type) && (!state.tree.subject || fact.subject === state.tree.subject));
   const localTreeFilter = Boolean(state.tree.type || state.tree.subject);
   $('#memory-count').textContent = localTreeFilter ? rows.length : (state.factTotal ?? rows.length);
-  list.innerHTML = rows.length ? rows.map((fact) => `
+  const selectedIndex = state.selected ? rows.findIndex((fact) => fact.id === state.selected.id) : -1;
+  if (selectedIndex >= state.memoryLimit) state.memoryLimit = Math.ceil((selectedIndex + 1) / 8) * 8;
+  const visible = rows.slice(0, state.memoryLimit);
+  list.innerHTML = rows.length ? visible.map((fact) => `
     <button class="memory-row${state.selected?.id === fact.id ? ' is-selected' : ''}" type="button" data-fact-id="${escapeHtml(fact.id)}">
       <div class="memory-main"><div class="memory-line">${typeTag(fact.type)}<span class="memory-claim" title="${escapeHtml(fact.claim)}">${escapeHtml(fact.abstract || fact.claim)}</span></div><div class="memory-subject">${escapeHtml(fact.subject)} · ${formatDate(fact.valid_from)}</div></div>
       <div>${statusBadge(fact.status)}</div>
       <div class="evidence-count">${fact.evidence?.length ?? 0}</div>
     </button>`).join('') : '<div class="empty-state"><div class="empty-mark">M</div><h3>还没有匹配的记忆</h3><p>换个文件夹或关键词，或等待 Agent 捕获新的用户信息。</p></div>';
+  if (rows.length > visible.length) {
+    list.insertAdjacentHTML('beforeend', `
+      <div class="memory-more">
+        <span>已显示 ${visible.length} / ${rows.length}</span>
+        <button class="button button-outline" type="button" id="memory-more-button">再显示 ${Math.min(8, rows.length - visible.length)} 条</button>
+      </div>`);
+    $('#memory-more-button')?.addEventListener('click', () => {
+      state.memoryLimit += 8;
+      renderFacts();
+    });
+  }
   $$('.memory-row').forEach((row) => row.addEventListener('click', () => selectFact(row.dataset.factId)));
 }
 
@@ -269,23 +302,34 @@ function renderEpisodes() {
 
 function renderDetail(fact) {
   const content = $('#detail-content');
+  const panel = $('#detail-panel');
+  const grid = $('#memories');
   if (!fact) {
+    panel?.classList.add('is-hidden');
+    grid?.classList.remove('has-detail');
     $('#detail-empty').classList.remove('is-hidden');
     content.classList.add('is-hidden');
     return;
   }
+  panel?.classList.remove('is-hidden');
+  grid?.classList.add('has-detail');
   $('#detail-empty').classList.add('is-hidden');
   content.classList.remove('is-hidden');
   const confidence = Math.round((fact.confidence || 0) * 100);
   const evidence = (fact.evidence || []).map((item) => `<div class="evidence-item"><p class="evidence-quote">“${escapeHtml(item.quote)}”</p><span class="evidence-meta">${escapeHtml(item.episode)} · ${formatDate(item.date)} · ${escapeHtml(item.origin)}</span></div>`).join('');
   const canAct = fact.status !== 'retracted' && fact.status !== 'superseded';
   content.innerHTML = `
-    <div class="detail-top"><div><div class="memory-line">${typeTag(fact.type)}${statusBadge(fact.status)}</div><h2 class="detail-title">${escapeHtml(fact.claim)}</h2><p class="detail-id">${escapeHtml(fact.id)}</p></div></div>
+    <div class="detail-top"><div><div class="memory-line">${typeTag(fact.type)}${statusBadge(fact.status)}</div><h2 class="detail-title">${escapeHtml(fact.claim)}</h2><p class="detail-id">${escapeHtml(fact.id)}</p></div><button class="icon-button detail-close" id="detail-close" type="button" title="关闭详情" aria-label="关闭详情"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
     <div class="detail-actions">${canAct ? `<button class="button button-outline" data-action="correct">${icon('edit')}纠正</button><button class="button button-outline" data-action="contest">${icon('flag')}标记冲突</button><button class="button button-danger" data-action="retract">${icon('undo')}撤回</button>${fact.status === 'contested' ? `<button class="button button-outline" data-action="resolve">解决冲突</button>` : ''}` : '<span class="panel-meta">此记忆已结束当前生命周期</span>'}</div>
     <div class="detail-section"><div class="detail-section-label">Confidence</div><div class="confidence-row"><div class="confidence-track"><div class="confidence-fill ${widthBucket(confidence)}"></div></div><span class="confidence-value">${confidence}%</span></div></div>
     <div class="detail-section"><div class="detail-section-label">原文证据 · ${fact.evidence?.length ?? 0}</div>${evidence || '<p class="panel-subtitle">没有证据。</p>'}</div>
     <div class="detail-section"><div class="detail-meta"><div><span class="meta-label">来源 Agent</span><span class="meta-value">${escapeHtml(displaySource(fact.source?.agent || 'unknown'))}</span></div><div><span class="meta-label">会话</span><span class="meta-value">${escapeHtml(fact.source?.session || '—')}</span></div><div><span class="meta-label">首次记录</span><span class="meta-value">${formatDate(fact.created_at)}</span></div><div><span class="meta-label">有效起点</span><span class="meta-value">${formatDate(fact.valid_from)}</span></div></div></div>`;
   content.querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => openAction(button.dataset.action, fact)));
+  content.querySelector('#detail-close')?.addEventListener('click', () => {
+    state.selected = null;
+    renderFacts();
+    renderDetail(null);
+  });
 }
 
 async function loadData() {
@@ -494,6 +538,9 @@ async function selectFact(id) {
   try {
     state.selected = await fetchJson(`/api/facts/${encodeURIComponent(id)}`);
     renderFacts(); renderDetail(state.selected);
+    if (window.matchMedia('(max-width: 1120px)').matches) {
+      $('#detail-panel')?.scrollIntoView({ block: 'start' });
+    }
   } catch (error) { notify(error.message, true); }
 }
 
@@ -952,12 +999,14 @@ function switchView(name, opts = {}) {
     state.filters.status = 'contested';
     state.tree = { type: '', subject: '' };
     state.selected = null;
+    resetMemoryLimit();
     renderDetail(null);
   } else if (opts.status) {
     state.filters.status = opts.status;
   } else {
     state.filters.status = '';
   }
+  if (name === 'memories') resetMemoryLimit();
   $('#status-filter').value = state.filters.status;
   window.scrollTo(0, 0);
   loadData();
@@ -1010,9 +1059,14 @@ function bind() {
   $('#action-form').addEventListener('submit', submitAction);
   $('#dialog-close').addEventListener('click', () => $('#action-dialog').close());
   $('#dialog-cancel').addEventListener('click', () => $('#action-dialog').close());
-  $('#search-input').addEventListener('input', (event) => { window.clearTimeout(searchTimer); searchTimer = window.setTimeout(() => { state.filters.q = event.target.value.trim(); loadData(); }, 240); });
-  $('#status-filter').addEventListener('change', (event) => { state.filters.status = event.target.value; loadData(); });
-  $('#type-filter').addEventListener('change', (event) => { state.filters.type = event.target.value; loadData(); });
+  $('#search-input').addEventListener('input', (event) => { window.clearTimeout(searchTimer); searchTimer = window.setTimeout(() => { state.filters.q = event.target.value.trim(); resetMemoryLimit(); loadData(); }, 240); });
+  $('#status-filter').addEventListener('change', (event) => { state.filters.status = event.target.value; resetMemoryLimit(); loadData(); });
+  $('#type-filter').addEventListener('change', (event) => { state.filters.type = event.target.value; resetMemoryLimit(); loadData(); });
+  $('#memory-tree-toggle')?.addEventListener('click', () => {
+    state.memoryTreeCollapsed = !state.memoryTreeCollapsed;
+    try { localStorage.setItem('membrain.memoryTreeCollapsed', state.memoryTreeCollapsed ? '1' : '0'); } catch { /* storage may be disabled */ }
+    applyMemoryTreeState();
+  });
   $('#diffs-refresh')?.addEventListener('click', () => loadDiffs());
   $('#import-fold')?.addEventListener('toggle', (event) => {
     if (event.target.open && !state.lib.importLoaded) loadImport();
@@ -1061,6 +1115,7 @@ function bind() {
       state.treeOpen[type] = true;
       state.tree = { type, subject };
     }
+    resetMemoryLimit();
     renderTree();
     renderFacts();
   });
@@ -1178,6 +1233,7 @@ async function loadDiffs() {
 
 
 bind();
+applyMemoryTreeState();
 renderChat();
 renderMemorySources();
 restoreChat();
