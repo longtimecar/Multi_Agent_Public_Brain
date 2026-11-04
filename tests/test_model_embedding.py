@@ -132,13 +132,18 @@ def _scan(tmp_path, registry=(), which=NO_CMD):
                                              which=which, registry=lambda: list(registry))}
 
 
-def test_deepseek_and_doubao_are_recognised_as_real_agents(tmp_path):
+def test_deepseek_bot_leftover_does_not_fake_deepseek_install(tmp_path):
+    # DeepSeek Bot 是另一个产品，它的数据目录/注册表名不能冒充 DeepSeek 已安装。
     roaming = tmp_path / "Roaming"
     (roaming / "DeepSeek Bot").mkdir(parents=True)
     (roaming / "Doubao").mkdir(parents=True)
-    items = _scan(tmp_path, registry=["Doubao 5.6.0"])
-    assert items["deepseek"]["installed"] and items["deepseek"]["status"] == "not_connected"
+    items = _scan(tmp_path, registry=["Doubao 5.6.0", "DeepSeek Bot 0.2.3"])
+    assert items["deepseek"]["installed"] is False
     assert items["doubao"]["installed"] and items["doubao"]["status"] == "not_connected"
+    # 真正装过 DeepSeek（启动后留下配置目录 ~/.deepseek）才算安装
+    (tmp_path / ".deepseek").mkdir(parents=True)
+    items = _scan(tmp_path, registry=["Doubao 5.6.0", "DeepSeek Bot 0.2.3"])
+    assert items["deepseek"]["installed"] is True
 
 
 def test_a_doubao_data_dir_left_after_uninstall_is_not_installed(tmp_path):

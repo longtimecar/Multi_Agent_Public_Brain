@@ -59,7 +59,7 @@ SPECS: tuple[AgentSpec, ...] = (
               paths=("%APPDATA%/com.qoder.app.stable", "%APPDATA%/com.qodercn.app.stable",
                      "~/.qoder", "~/.qoder-cn")),
     AgentSpec("deepseek", "DeepSeek", ("deepseek",),
-              paths=("%APPDATA%/DeepSeek Bot", "%APPDATA%/DeepSeek", "~/.deepseek"),
+              paths=("%APPDATA%/DeepSeek", "~/.deepseek"),
               config="~/.deepseek/mcp.json"),
     AgentSpec("deepseek-harness", "DeepSeek Harness", ("deepseek harness", "deepseek-harness", "dsh"),
               paths=("%APPDATA%/@deepseek-ai", "%LOCALAPPDATA%/@deepseek-aidsh-desktop-updater",
@@ -155,6 +155,19 @@ def _installed(spec: AgentSpec, home: Path, appdata: Path, which: Callable[[str]
         lowered = (name.lower() for name in registry_names)
         if not any(token in name for token in spec.match for name in lowered):
             return False
+        return True
+    if spec.config is not None:
+        # Residue guard: a data folder alone is not "installed". The app either
+        # left its config directory behind (it ran at least once) or is still
+        # listed in the Windows uninstall list. Names claimed by a sibling spec
+        # with a longer match token ("DeepSeek Harness" vs "DeepSeek") don't count.
+        if _resolve(spec.config, home, appdata).parent.exists():
+            return True
+        own = max((len(t) for t in spec.match), default=0)
+        longer = [t for s2 in SPECS if s2 is not spec for t in s2.match if len(t) > own]
+        lowered = [name.lower() for name in registry_names]
+        return any(token in name for token in spec.match
+                   for name in lowered if not any(t in name for t in longer))
     return True
 
 

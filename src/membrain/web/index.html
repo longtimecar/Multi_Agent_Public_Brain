@@ -189,7 +189,7 @@
               <div class="panel-header panel-header-stack">
                 <div>
                   <div class="panel-title-row"><h2>全部记忆</h2><span class="count-pill" id="memory-count">0</span></div>
-                  <p class="panel-subtitle">左栏 L1 分类树（点箭头逐层展开），中间 L2 正文，右栏基础信息</p>
+                  <p class="panel-subtitle">左边是记忆目录（点箭头展开），中间是内容原文，右边是来源和把握程度</p>
                 </div>
                 <div class="toolbar">
                   <label class="search-field">
@@ -207,9 +207,9 @@
               </div>
               <div class="obsidian-body">
                 <aside class="obsidian-tree" id="obsidian-tree" aria-label="记忆目录树"><div class="side-empty">正在整理…</div></aside>
-                <section class="obsidian-main" id="obsidian-main" aria-label="L2 正文">
+                <section class="obsidian-main" id="obsidian-main" aria-label="记忆原文">
                   <div class="detail-empty" id="obsidian-empty">
-                    <div class="detail-empty-mark">L2</div>
+                    <div class="detail-empty-mark">文</div>
                     <h2>选择一条记忆</h2>
                     <p>左栏点条目，这里显示正文与原文证据。</p>
                   </div>
@@ -248,7 +248,7 @@
         <div class="view" data-view-panel="diffs">
           <section class="panel diffs-panel" id="diffs">
             <div class="panel-header">
-              <div><div class="panel-title-row"><h2>会话变更</h2><span class="panel-meta">memory_diff</span></div><p class="panel-subtitle">只读查看每次会话归档后写入、更新或跳过了哪些记忆；技术细节仍可在详情底部展开。</p></div>
+              <div><div class="panel-title-row"><h2>会话变更</h2><span class="panel-meta">只读</span></div><p class="panel-subtitle">每次会话归档后，这里记录这场对话写入了哪些记忆、改了哪些、跳过了什么。排查“这条记忆哪来的”时才需要看。</p></div>
               <span class="count-pill" id="diffs-count">0</span>
             </div>
             <div class="diff-tools">
@@ -270,7 +270,7 @@
             <div class="import-card" id="import-card"><div class="side-empty">正在检查可导入的内容…</div></div>
           </details>
           <details class="import-fold" id="diffs-fold">
-            <summary><span>高级 · 会话变更审计</span><span class="import-fold-hint">memory_diff 溯源排查用 · 日常无需打开</span></summary>
+            <summary><span>高级 · 会话变更审计</span><span class="import-fold-hint">查『这条记忆哪来的』用 · 日常无需打开</span></summary>
             <div class="import-card">
               <p class="import-note">记录每场会话归档后记忆提炼的决定：写入了哪几条、更新了哪几条、跳过了什么。排查“这条记忆是哪来的 / 为什么没记下来”时才用。</p>
               <button class="button button-outline" id="open-diffs-button" type="button">打开会话变更页</button>
@@ -284,7 +284,7 @@
             <div class="panel-header panel-header-stack">
               <div>
                 <div class="panel-title-row"><h2>资料库</h2><span class="count-pill" id="rag-count">0</span></div>
-                <p class="panel-subtitle">把文件拖进来，自动解析、分块、向量化；问 Agent 时可按语义检索原文段落</p>
+                <p class="panel-subtitle">把文件拖进来，系统自动读取内容、分段、写摘要并建索引；之后能按意思搜到原文段落</p>
               </div>
               <div class="toolbar">
                 <label class="search-field">
@@ -298,20 +298,20 @@
             <div class="rag-drop" id="rag-drop">
               <div class="rag-drop-mark" aria-hidden="true">⤓</div>
               <p><strong>拖文件到这里</strong>（txt / md / csv / json / html / docx / pdf）</p>
-              <p class="panel-subtitle">解析 → 分块 → LLM 摘要 → embedding 向量化 → 混合检索</p>
+              <p class="panel-subtitle">自动完成：读取内容 → 切成小段 → 生成摘要 → 建立语义索引</p>
             </div>
             <div class="rag-list" id="rag-list"><div class="side-empty">正在加载文档…</div></div>
             <div class="rag-detail is-hidden" id="rag-detail"></div>
           </section>
           <section class="workspace-grid is-hidden" id="library">
             <aside class="panel tree-panel" aria-label="资料分类">
-              <div class="panel-header"><div><h2>资料分类</h2><p class="panel-subtitle">L1：来源 → 类别</p></div></div>
+              <div class="panel-header"><div><h2>资料分类</h2><p class="panel-subtitle">按来源 → 类别分类</p></div></div>
               <div class="tree-list" id="library-tree"></div>
             </aside>
             <div class="panel library-panel">
               <div class="panel-header">
                 <div><div class="panel-title-row"><h2>会话归档</h2><span class="count-pill" id="library-count">0</span></div>
-                <p class="panel-subtitle">导入的 Agent 历史会话存档 · 选中条目查看 L2 正文</p></div>
+                <p class="panel-subtitle">导入的历史会话存档；点一条看完整内容</p></div>
               </div>
               <div class="library-tools">
                 <input id="library-search" type="search" placeholder="搜索会话归档，例如：项目决策、偏好变化" aria-label="搜索会话归档" autocomplete="off">
@@ -320,7 +320,7 @@
             </div>
             <aside class="panel detail-panel" id="library-detail-panel">
               <div class="detail-empty" id="library-detail-empty">
-                <div class="detail-empty-mark">L2</div>
+                <div class="detail-empty-mark">文</div>
                 <h2>选择一篇资料</h2>
                 <p>从列表选中一篇资料，在这里查看完整正文。</p>
               </div>

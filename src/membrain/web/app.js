@@ -367,7 +367,7 @@ function renderDetail(fact) {
   const meta = $('#obsidian-meta');
   if (!main || !meta) return;
   if (!fact) {
-    main.innerHTML = '<div class="detail-empty"><div class="detail-empty-mark">L2</div><h2>选择一条记忆</h2><p>左栏点条目，这里显示正文与原文证据。</p></div>';
+    main.innerHTML = '<div class="detail-empty"><div class="detail-empty-mark">文</div><h2>选择一条记忆</h2><p>左边点一条记忆，这里显示内容原文和依据的原话。</p></div>';
     meta.innerHTML = '';
     return;
   }
@@ -375,8 +375,8 @@ function renderDetail(fact) {
   const evidence = (fact.evidence || []).map((item) => `<div class="evidence-item"><p class="evidence-quote">“${escapeHtml(item.quote)}”</p><span class="evidence-meta">${escapeHtml(item.episode)} · ${formatDate(item.date)} · ${escapeHtml(item.origin)}</span></div>`).join('');
   const canAct = fact.status !== 'retracted' && fact.status !== 'superseded';
   main.innerHTML = `
-    <div class="detail-top"><div><div class="memory-line"><span class="memory-folder-level">L2 正文</span>${typeTag(fact.type)}${statusBadge(fact.status)}</div><h2 class="detail-title">${escapeHtml(fact.claim)}</h2></div></div>
-    <div class="detail-section"><div class="detail-section-label">原文证据 · ${fact.evidence?.length ?? 0}</div>${evidence || '<p class="panel-subtitle">没有证据。</p>'}</div>`;
+    <div class="detail-top"><div><div class="memory-line"><span class="memory-folder-level">内容原文</span>${typeTag(fact.type)}${statusBadge(fact.status)}</div><h2 class="detail-title">${escapeHtml(fact.claim)}</h2></div></div>
+    <div class="detail-section"><div class="detail-section-label">依据的原话 · ${fact.evidence?.length ?? 0}</div>${evidence || '<p class="panel-subtitle">没有证据。</p>'}</div>`;
   meta.innerHTML = `
     <div class="detail-section"><div class="detail-section-label">基础信息</div>
       <div class="detail-meta">
@@ -390,7 +390,7 @@ function renderDetail(fact) {
         <div><span class="meta-label">记忆 ID</span><span class="meta-value">${escapeHtml(fact.id)}</span></div>
       </div>
     </div>
-    <div class="detail-section"><div class="detail-section-label">Confidence</div><div class="confidence-row"><div class="confidence-track"><div class="confidence-fill ${widthBucket(confidence)}"></div></div><span class="confidence-value">${confidence}%</span></div></div>
+    <div class="detail-section"><div class="detail-section-label">把握程度</div><div class="confidence-row"><div class="confidence-track"><div class="confidence-fill ${widthBucket(confidence)}"></div></div><span class="confidence-value">${confidence}%</span></div></div>
     <div class="detail-actions">${canAct ? `<button class="button button-outline" data-action="correct">${icon('edit')}纠正</button><button class="button button-outline" data-action="contest">${icon('flag')}标记冲突</button><button class="button button-danger" data-action="retract">${icon('undo')}撤回</button>${fact.status === 'contested' ? `<button class="button button-outline" data-action="resolve">解决冲突</button>` : ''}` : '<span class="panel-meta">此记忆已结束当前生命周期</span>'}</div>`;
   meta.querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => openAction(button.dataset.action, fact)));
 }
@@ -830,15 +830,17 @@ function renderAgents(items) {
     ? `<div class="agent-grid-note">已隐藏 ${hidden} 个未安装的 Agent。</div>` : '';
   grid.innerHTML = headNote + visible.map((agent) => {
     const [label, tone] = agentStatus[agent.status] || [agent.status, ''];
-    const capture = agent.capture === 'hooks' ? '自动捕获并注入' : '自动捕获（后台监听会话日志）；按需召回';
-    const connect = agent.can_connect && agent.status !== 'connected' && agent.status !== 'unreadable'
+    const capture = agent.capture === 'hooks' ? '对话内容自动记入记忆，并把相关记忆带给模型' : '对话自动记入记忆；需要时自动想起相关内容';
+    const connect = agent.can_connect && agent.installed && agent.status !== 'connected' && agent.status !== 'unreadable'
       ? `<button class="button button-dark" type="button" data-agent-connect="${escapeHtml(agent.key)}">一键接入</button>` : '';
     const connectedLike = agent.status === 'connected' || agent.isolated;
     const disconnect = connectedLike
       ? `<button class="button button-outline" type="button" data-agent-disconnect="${escapeHtml(agent.key)}">断开接入</button>` : '';
-    const note = agent.isolated
-      ? '已断开：该 Agent 的记忆已隔离（不删除），重新接入后恢复可见。'
-      : `${capture}${agent.protected ? '；配置受保护' : ''}`;
+    const note = !agent.installed
+      ? '这台机器上还没装它。装好后回来点“一键接入”就行。'
+      : agent.isolated
+        ? '已断开：它的记忆被暂时隔离（没有删除），重新接入后恢复可见。'
+        : `${capture}${agent.protected ? '；它的设置不让程序自动改，点“复制提示词”照着做' : ''}`;
     const chip = agent.isolated ? '<span class="agent-chip is-warn">已隔离</span>' : `<span class="agent-chip ${tone}">${label}</span>`;
     const running = agent.running ? '<span class="agent-chip is-ok">运行中</span>' : '';
     return `<article class="agent-card${agent.installed ? '' : ' is-off'}${agent.isolated ? ' is-isolated' : ''}">
@@ -1039,7 +1041,7 @@ function renderSessionImport(prev) {
   }).join('');
   const actionable = (prev.new || 0) > 0 || sessions.some((s) => s.status === 'skipped');
   card.innerHTML = `<h3>Agent 会话导入 · LLM 清洗筛选</h3>
-    <p class="import-note">自动发现本机 Agent 历史会话（源只读）。勾选要导入的，由 LLM 识别分类、生成标题与 L0 摘要后落库资料库；<strong>不勾选即不导入</strong>；「忽略选中」后永久不再提示（可恢复）。纯问候/空会话/系统回执等噪声自动丢弃。</p>
+    <p class="import-note">自动发现本机 Agent 历史会话（源只读）。勾选要导入的，由 AI 识别分类、起标题、写一句话摘要后进资料库；<strong>不勾选即不导入</strong>；「忽略选中」后永久不再提示（可恢复）。纯问候/空会话/系统回执等噪声自动丢弃。</p>
     <p class="import-note" id="watcher-note">新对话由后台自动捕获并提炼，无需重复导入。</p>
     <div class="import-actions">
       <button class="button button-dark" id="session-import-start" type="button" ${actionable ? '' : 'disabled'}>导入选中</button>
@@ -1244,7 +1246,7 @@ function renderLibraryList() {
   if (!rows.length) {
     list.innerHTML = state.lib.notes.length
       ? `<div class="side-empty">${escapeHtml(state.lib.notes.join('；'))}</div>`
-      : '<div class="empty-state library-empty"><div class="empty-mark">L0</div><h3>资料库还是空的</h3><p>展开上方的“数据导入”，可以导入本机 Agent 历史会话，或配置可选的历史来源。</p></div>';
+      : '<div class="empty-state library-empty"><div class="empty-mark">档</div><h3>资料库还是空的</h3><p>展开上方的“数据导入”，可以导入本机 Agent 历史会话，或配置可选的历史来源。</p></div>';
     return;
   }
   list.innerHTML = rows.map((item) => `<button type="button" class="library-item${state.lib.selected === item.id ? ' is-selected' : ''}" data-entry="${escapeHtml(item.id)}" aria-label="打开资料：${escapeHtml(item.title)}">
@@ -1280,7 +1282,7 @@ async function selectLibraryEntry(id, offset = 0) {
       <div class="detail-top"><div><div class="memory-line"><span class="agent-chip">${escapeHtml(state.lib.labels[entry.category] || entry.category)}</span>${entry.date ? `<span class="panel-meta">${escapeHtml(entry.date)}</span>` : ''}</div>
       <h2 class="detail-title">${escapeHtml(entry.title)}</h2>
       <p class="detail-id">${escapeHtml(librarySourceLabel(entry.source))} / ${escapeHtml(state.lib.labels[entry.category] || entry.category)} / ${escapeHtml(entry.id)}</p></div></div>
-      <div class="detail-section"><div class="detail-section-label">L2 正文 · ${entry.total_chars} 字</div>
+      <div class="detail-section"><div class="detail-section-label">完整内容 · ${entry.total_chars} 字</div>
         <pre class="library-body">${escapeHtml(entry.text)}</pre>
         ${pager}
         ${hasMore ? '<p class="panel-subtitle">长文已分段；也可让 Agent 用 read_archive 分段读取。</p>' : ''}</div>
@@ -1333,7 +1335,7 @@ async function openRagDoc(id) {
       <div class="detail-top"><div><h2 class="detail-title">${escapeHtml(doc.title)}</h2>
       <p class="detail-id">${escapeHtml(doc.uri || doc.id)} · ${escapeHtml(doc.category)}</p></div>
       <button class="button button-danger" id="rag-delete-button">删除</button></div>
-      <div class="detail-section"><div class="detail-section-label">分块 · ${doc.chunks}</div>
+      <div class="detail-section"><div class="detail-section-label">内容分段 · ${doc.chunks}（检索时按段落定位）</div>
         ${(doc.chunk_list || []).map((c) => `<div class="rag-chunk"><span class="rag-chunk-seq">#${c.seq + 1}</span><p>${escapeHtml(c.text)}</p></div>`).join('')}
       </div>`;
     $('#rag-delete-button')?.addEventListener('click', async () => {
@@ -1354,7 +1356,7 @@ async function uploadRagFiles(fileList) {
   state.ragUploading = true;
   const button = $('#rag-upload-button');
   if (button) { button.disabled = true; button.textContent = '导入中…'; }
-  notify(`正在导入 ${files.length} 个文件（解析 → 分块 → 向量化）…`);
+  notify(`正在导入 ${files.length} 个文件（读取内容、分段、建索引）…`);
   let ok = 0;
   for (const file of files) {
     try {

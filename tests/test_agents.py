@@ -78,3 +78,32 @@ def test_registry_scan_lists_unknown_agents_once_and_skips_known_ones(tmp_path):
     others = [i for i in items.values() if i["key"].startswith("other:")]
     assert [i["name"] for i in others] == ["Kimi Desktop"]
     assert others[0]["status"] == "manual" and "record_user_message" in others[0]["prompt"]
+
+
+def test_leftover_data_folder_alone_is_not_installed(tmp_path):
+    home = tmp_path / "home"
+    appdata = home / "AppData" / "Roaming"
+    (appdata / "SomeBot").mkdir(parents=True)
+    spec = agents.AgentSpec("xbot", "XBot", ("xbot",),
+                            paths=("%APPDATA%/SomeBot", "~/.xbot"), config="~/.xbot/mcp.json")
+    which = lambda c: None  # noqa: E731
+    # 只剩数据残留：既没配置目录也没注册表 → 不算安装
+    assert agents._installed(spec, home, appdata, which=which, registry_names=[]) is False
+    # 注册表里还挂着 → 算安装
+    assert agents._installed(spec, home, appdata, which=which, registry_names=["XBot 1.0"]) is True
+    # 启动过（留下配置目录）→ 算安装
+    (home / ".xbot").mkdir(parents=True)
+    assert agents._installed(spec, home, appdata, which=which, registry_names=[]) is True
+
+
+def test_sibling_registry_names_do_not_count_for_deepseek(tmp_path):
+    home = tmp_path / "home"
+    appdata = home / "AppData" / "Roaming"
+    (appdata / "DeepSeek").mkdir(parents=True)  # 残留数据
+    spec = agents._spec("deepseek")
+    which = lambda c: None  # noqa: E731
+    # 注册表里只有更长名字的兄弟产品（DeepSeek Harness）→ 不算 DeepSeek 已安装
+    assert agents._installed(spec, home, appdata, which=which,
+                             registry_names=["DeepSeek Harness 0.2.1-rc.3"]) is False
+    assert agents._installed(spec, home, appdata, which=which,
+                             registry_names=["DeepSeek 3.0"]) is True
