@@ -67,13 +67,16 @@ SPECS: tuple[AgentSpec, ...] = (
     AgentSpec("doubao", "Doubao", ("doubao",),
               paths=("%APPDATA%/Doubao", "~/.doubao"),
               config="~/.doubao/mcp.json"),
+    AgentSpec("qwen", "千问 (Qwen)", ("qwen", "qianwen", "千问"),
+              paths=("%LOCALAPPDATA%/Qianwen", "%LOCALAPPDATA%/QianwenUpdater", "~/.qwen-agent"),
+              where="在千问的 设置 → MCP / 工具 里新增一个自定义 MCP 服务"),
     AgentSpec("vscode", "VS Code (Copilot 等插件)", ("visual studio code", "vscode"), commands=("code",),
               paths=("%APPDATA%/Code",)),
 )
 
 # Names worth reporting when found by the scan but not described above.
 KEYWORDS = ("claude", "codex", "cursor", "gemini", "copilot", "trae", "qoder", "kimi", "doubao", "deepseek",
-            "codebuddy", "windsurf", "cline", "aider", "hermes", "agent")
+            "codebuddy", "windsurf", "cline", "aider", "hermes", "qwen", "qianwen", "agent")
 
 # A trailing version turns one product into several entries in the Windows
 # uninstall list: "DeepSeek Bot" and "DeepSeek Bot 0.2.3" are the same app.
