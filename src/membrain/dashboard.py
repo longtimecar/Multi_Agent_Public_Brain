@@ -554,6 +554,40 @@ class DashboardRuntime:
             "estimated_output_tokens": estimate_tokens(answer),
         }
 
+    HOT_FIELDS = ("llm_base_url", "llm_model", "llm_api_key", "llm_api_format", "llm_timeout",
+                  "embed_base_url", "embed_api_key", "embed_model", "embed_timeout",
+                  "semantic_floor", "use_intent_default", "use_rerank_default")
+
+    def reload_config(self) -> dict[str, Any]:
+        """Re-read .env into the running runtime without a restart.
+
+        Only model/embedding/threshold settings hot-reload. The memory home and
+        other structural paths stay as they were: switching those safely means
+        restarting the dashboard, because the store and index hold open files.
+        """
+        from .config import load_settings
+        new_settings = load_settings()
+        old_settings = self.service.settings
+        changed: dict[str, dict[str, str]] = {}
+        for field in self.HOT_FIELDS:
+            old_value = getattr(old_settings, field, None)
+            new_value = getattr(new_settings, field, None)
+            secret = "api_key" in field
+            if (old_value or "") != (new_value or ""):
+                changed[field] = {
+                    "from": "(已设置)" if secret and old_value else (old_value or ""),
+                    "to": "(已设置)" if secret and new_value else (new_value or ""),
+                }
+        # Swap the shared settings reference: every holder (LLM client, embedder,
+        # retriever) reads fields off it per call, so no object rebuild is needed.
+        self.service.settings = new_settings
+        self.llm_client.settings = new_settings
+        self.service.embedder.settings = new_settings
+        self.service.retriever.settings = new_settings
+        self.service.archive.settings = new_settings
+        return {"ok": True, "changed": changed, "changed_count": len(changed),
+                "note": "记忆目录等结构性配置不参与热加载，仍需重启。"}
+
     def test_model(self) -> dict[str, Any]:
         if not self.service.settings.llm_enabled:
             raise LLMError("LLM 尚未配置。请在 .env 中设置模型地址和模型名。")
@@ -979,6 +1013,8 @@ def make_handler(runtime: DashboardRuntime):
                     self._json(200, runtime.test_model())
                 elif path == "/api/model/config":
                     self._json(200, runtime.configure_model(data))
+                elif path == "/api/config/reload":
+                    self._json(200, runtime.reload_config())
                 elif path == "/api/model/embedding/test":
                     self._json(200, runtime.test_embedding())
                 elif path == "/api/model/embedding/config":

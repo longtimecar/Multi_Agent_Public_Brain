@@ -273,7 +273,10 @@ def connect(key: str, memory_home: Path, home: Path | None = None, appdata: Path
         raise AgentError("这个软件没有可自动修改的配置文件。请点“复制提示词”，按提示在软件里添加。")
     path = _resolve(spec.config, home, appdata)
     if not path.exists() and not path.parent.exists():
-        raise AgentError("没有检测到这个软件的配置目录，请先安装并启动一次。")
+        raise AgentError(
+            f"没有找到 {spec.name} 的配置目录（期望：{path.parent}）。"
+            f"请先安装并启动一次 {spec.name}，让它生成配置目录后再点一键接入；"
+            f"或现在就点“复制提示词”，在软件里手动添加。")
     data = _read_json(path) if path.exists() else {}
     servers = data.setdefault(spec.servers_key, {})
     if not isinstance(servers, dict):

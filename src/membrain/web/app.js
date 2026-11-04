@@ -622,6 +622,23 @@ async function testModel() {
   }
 }
 
+async function reloadConfig() {
+  const button = $('#config-reload-button');
+  button.disabled = true;
+  try {
+    const result = await fetchJson('/api/config/reload', { method: 'POST', body: '{}' });
+    const names = { llm_base_url: '接口地址', llm_model: '模型', llm_api_key: '模型 Key',
+      llm_api_format: '接口格式', llm_timeout: '模型超时', embed_base_url: 'Embedding 地址',
+      embed_api_key: 'Embedding Key', embed_model: 'Embedding 模型', embed_timeout: 'Embedding 超时',
+      semantic_floor: '语义阈值', use_intent_default: '意图识别', use_rerank_default: '重排' };
+    const items = Object.entries(result.changed || {})
+      .map(([field, change]) => `${names[field] || field}: ${change.from || '（空）'} → ${change.to || '（空）'}`);
+    notify(items.length ? `已热加载 ${items.length} 项变更：${items.join('；')}` : '配置无变化。', !items.length);
+    await loadModel();
+  } catch (error) { notify(error.message, true); }
+  button.disabled = false;
+}
+
 async function saveModelConfig(event) {
   event.preventDefault();
   const form = $('#model-config-form');
@@ -1258,6 +1275,7 @@ function bind() {
     }
   });
   $('#model-test-button').addEventListener('click', testModel);
+  $('#config-reload-button')?.addEventListener('click', reloadConfig);
   $('#model-config-form').addEventListener('submit', saveModelConfig);
   $('#model-config-clear-key').addEventListener('change', (event) => {
     $('#model-config-key').disabled = event.target.checked;

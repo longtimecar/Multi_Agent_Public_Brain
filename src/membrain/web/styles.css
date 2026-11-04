@@ -87,6 +87,8 @@ h3 { font-size: 14px; }
 .overview-empty-mark { display: grid; flex: none; width: 42px; height: 42px; border-radius: 50%; background: var(--teal-soft); color: var(--teal); place-items: center; font: 700 12px ui-monospace, monospace; }
 .overview-empty h2 { margin: 1px 0 5px; font-size: 16px; }
 .overview-empty p { max-width: 760px; margin: 0; color: var(--ink-soft); font-size: 13px; line-height: 1.65; }
+.overview-empty-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.overview-empty-actions .button { min-height: 34px; }
 
 .workspace-grid { display: grid; grid-template-columns: 210px minmax(0, 1.32fr) minmax(310px, .68fr); gap: 16px; align-items: start; }
 .panel { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); box-shadow: var(--shadow); }

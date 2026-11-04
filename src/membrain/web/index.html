@@ -154,7 +154,12 @@
             <div class="overview-empty-mark" aria-hidden="true">01</div>
             <div>
               <h2>记忆库现在是空的</h2>
-              <p>接入一个 Agent 后，新的对话会按你的设置自动提取；也可以先点右上角“添加记忆”，用一句原话建立第一条可追溯记忆。</p>
+              <p>三条路任选：先聊几句让记忆自动积累、接入一个本机 Agent、或直接写下第一条记忆。</p>
+              <div class="overview-empty-actions">
+                <button class="button button-dark" type="button" data-goto="chat">开始对话</button>
+                <button class="button button-outline" type="button" data-goto="agents">接入 Agent</button>
+                <button class="button button-outline" type="button" data-goto="memories">手动添加记忆</button>
+              </div>
             </div>
           </section>
           <div class="overview-lower" id="overview-lower">
@@ -315,6 +320,7 @@
               <div class="model-primary"><span class="model-dot" id="model-dot"></span><div><strong id="model-name">正在读取配置</strong><span id="model-format">—</span></div></div>
               <dl class="model-details"><div><dt>接口格式</dt><dd id="model-api-format">—</dd></div><div><dt>API Key</dt><dd id="model-key-status">—</dd></div><div><dt>超时</dt><dd id="model-timeout">—</dd></div><div><dt>Embedding</dt><dd id="model-embedding">—</dd></div></dl>
               <button class="button button-outline model-test-button" id="model-test-button" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v4m0 10v4M3 12h4m10 0h4M5.6 5.6l2.8 2.8m7.2 7.2 2.8 2.8m0-12.8-2.8 2.8m-7.2 7.2-2.8 2.8"/></svg><span>测试模型连接</span></button>
+              <button class="button button-outline" id="config-reload-button" type="button" title="重新读取 .env，无需重启"><span>重新加载配置</span></button>
               <p class="model-result" id="model-result">连接状态会在这里显示。</p>
               <details class="model-config" id="model-config"><summary>配置或更换模型</summary>
                 <form id="model-config-form">
