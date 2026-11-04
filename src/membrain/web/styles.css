@@ -305,6 +305,9 @@ dialog::backdrop { background: rgba(19, 38, 39, .38); }
 }
 
 .agents-panel { margin-top: 16px; padding-bottom: 16px; }
+.agents-panel .check-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-soft); white-space: nowrap; cursor: pointer; }
+.agents-panel .check-inline input { width: 15px; height: 15px; margin: 0; accent-color: var(--teal); }
+.agent-grid-note { grid-column: 1 / -1; color: #8a968f; font-size: 11px; }
 .agent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; padding: 0 16px; }
 .agent-card { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; background: #fff; }
 .agent-card.is-off { opacity: .55; }

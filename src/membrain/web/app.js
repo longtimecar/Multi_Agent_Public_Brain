@@ -804,7 +804,13 @@ function renderAgents(items) {
   state.agents = items;
   const grid = $('#agent-grid');
   if (!items.length) { grid.innerHTML = '<div class="side-empty">没有扫描到 Agent。</div>'; return; }
-  grid.innerHTML = items.map((agent) => {
+  let showAll = false;
+  try { showAll = localStorage.getItem('membrain.agentShowAll') === '1'; } catch { /* storage may be disabled */ }
+  const visible = showAll ? items : items.filter((agent) => agent.installed || agent.key.startsWith('other:'));
+  const hidden = items.length - visible.length;
+  const headNote = hidden > 0
+    ? `<div class="agent-grid-note">已隐藏 ${hidden} 个未安装的 Agent。</div>` : '';
+  grid.innerHTML = headNote + visible.map((agent) => {
     const [label, tone] = agentStatus[agent.status] || [agent.status, ''];
     const capture = agent.capture === 'hooks' ? '自动捕获并注入' : '按需召回；写入靠模型调用记录工具';
     const connect = agent.can_connect && agent.status !== 'connected' && agent.status !== 'unreadable'
@@ -1201,6 +1207,10 @@ let searchTimer;
 function bind() {
   $('#agents-copy-all')?.addEventListener('click', copyAllPrompts);
   $('#agents-scan-button').addEventListener('click', loadAgents);
+  $('#agents-show-all')?.addEventListener('change', (event) => {
+    try { localStorage.setItem('membrain.agentShowAll', event.target.checked ? '1' : '0'); } catch { /* storage may be disabled */ }
+    renderAgents(state.agents || []);
+  });
   let libraryTimer;
   $('#library-search').addEventListener('input', () => { window.clearTimeout(libraryTimer); libraryTimer = window.setTimeout(loadLibrary, 300); });
   $('#refresh-button').addEventListener('click', refreshCurrentView);
