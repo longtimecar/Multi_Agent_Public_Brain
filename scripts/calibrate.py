@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import hashlib
 import json
 import sys
 import tempfile
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from membrain.config import load_settings
@@ -32,6 +33,10 @@ def main() -> int:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--temp-dir", type=Path, help="parent for the isolated temporary store")
     parser.add_argument("--strict", action="store_true", help="also fail on unrelated injections")
+    parser.add_argument("--baseline-path", type=Path,
+                        help="where the recall baseline is stored (default <repo>/state/recall-baseline.json)")
+    parser.add_argument("--update-baseline", action="store_true",
+                        help="write the result as the new baseline instead of comparing against it")
     args = parser.parse_args()
     if args.batch_size < 1 or (args.floor is not None and not 0.0 <= args.floor <= 1.0):
         parser.error("batch size must be positive and floor must be between 0 and 1")
@@ -104,6 +109,70 @@ def main() -> int:
     false_positives = sum(not p["related"] and matched for p, _, matched, _ in measurements)
     degraded = sum(mode != "hybrid" for _, _, _, mode in measurements)
     print(f"Missed related: {false_negatives}; unrelated injected: {false_positives}; non-hybrid: {degraded}")
+
+    baseline_path = args.baseline_path or (ROOT / "state" / "recall-baseline.json")
+    passed = len(measurements) - false_negatives - false_positives
+    rate = round(passed / len(measurements), 4) if measurements else 0.0
+    record = {
+        "embed_model": settings.embed_model,
+        "semantic_floor": settings.semantic_floor,
+        "pairs": len(measurements),
+        "passed": passed,
+        "pass_rate": rate,
+        "false_negatives": false_negatives,
+        "false_positives": false_positives,
+        "degraded": degraded,
+        "fixture_sha256": hashlib.sha256(args.fixture.read_bytes()).hexdigest()[:16],
+        "measured_at": datetime.now(timezone.utc).isoformat(),
+        "failures": [{"id": p["id"], "query": p["query"], "related": p["related"], "injected": matched}
+                     for p, _, matched, _ in measurements
+                     if matched != p["related"]],
+    }
+
+    if args.update_baseline:
+        baseline_path.parent.mkdir(parents=True, exist_ok=True)
+        baseline_path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"Baseline written to {baseline_path} (pass_rate {rate:.2%}).")
+        return 1 if false_negatives or degraded or (args.strict and false_positives) else 0
+
+    if not baseline_path.exists():
+        print(f"No baseline at {baseline_path}; run again with --update-baseline to record one.")
+        return 1 if false_negatives or degraded or (args.strict and false_positives) else 0
+
+    try:
+        previous = json.loads(baseline_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"Baseline unreadable: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"Baseline: {previous.get('embed_model')} floor {previous.get('semantic_floor')} "
+          f"pass_rate {previous.get('pass_rate'):.2%} ({previous.get('measured_at')})")
+    print(f"Current : {settings.embed_model} floor {settings.semantic_floor:.4f} pass_rate {rate:.2%}")
+
+    regressions: list[str] = []
+    if previous.get("embed_model") != settings.embed_model:
+        print(f"NOTE: embedding model changed since the baseline ({previous.get('embed_model')} → {settings.embed_model}).")
+    if previous.get("fixture_sha256") != record["fixture_sha256"]:
+        print("NOTE: fixture changed since the baseline; compare pass rates with care.")
+    rate_drop = (previous.get("pass_rate") or 0.0) - rate
+    if rate_drop > 0.02:
+        regressions.append(f"pass rate dropped by {rate_drop:.2%}")
+    if false_negatives > (previous.get("false_negatives") or 0):
+        regressions.append(f"missed related increased ({previous.get('false_negatives')} → {false_negatives})")
+    if args.strict and false_positives > (previous.get("false_positives") or 0):
+        regressions.append(f"unrelated injections increased ({previous.get('false_positives')} → {false_positives})")
+    if previous.get("failures"):
+        still_failing = {f["id"] for f in record["failures"]} & {f["id"] for f in previous["failures"]}
+        for failure in record["failures"]:
+            if failure["id"] in still_failing and failure["related"]:
+                regressions.append(f"case still failing: {failure['id']}")
+
+    if regressions:
+        print("REGRESSIONS:")
+        for line in regressions:
+            print(f"  - {line}")
+        return 1
+    print("No regression against the baseline.")
     return 1 if false_negatives or degraded or (args.strict and false_positives) else 0
 
 

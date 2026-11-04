@@ -500,7 +500,7 @@ async function loadData() {
   const episodes = episodesResult.status === 'fulfilled' ? episodesResult.value : null;
   const model = modelResult.status === 'fulfilled' ? modelResult.value : null;
   if (overview) renderOverview(overview);
-  if (model) renderModel(model);
+  if (model) { renderModel(model); renderRecallBaseline(model); }
   if (facts) {
     state.facts = facts.items || [];
     state.factTotal = Number.isFinite(facts.count) ? facts.count : state.facts.length;
@@ -637,6 +637,49 @@ async function reloadConfig() {
     await loadModel();
   } catch (error) { notify(error.message, true); }
   button.disabled = false;
+}
+
+function renderRecallBaseline(model) {
+  const info = $('#recall-baseline-info');
+  const note = $('#recall-baseline-note');
+  if (!info || !note) return;
+  const baseline = model.recall_baseline;
+  if (!baseline) { info.textContent = '未建立基线'; return; }
+  const rate = Math.round((baseline.pass_rate || 0) * 100);
+  info.textContent = `${baseline.embed_model} · 通过率 ${rate}% · ${String(baseline.measured_at || '').slice(0, 10)}`;
+  if (model.recall_baseline_stale) {
+    note.textContent = '⚠️ Embedding 模型与基线不一致，建议重新验证并更新基线。';
+    note.classList.add('is-warn');
+  } else {
+    note.textContent = '与当前配置一致。换模型或调阈值后请重新验证。';
+    note.classList.remove('is-warn');
+  }
+}
+
+let recallVerifyTimer;
+async function startRecallVerify() {
+  const button = $('#recall-verify-button');
+  button.disabled = true;
+  $('#recall-verify-result').textContent = '正在后台验证（82 组黄金样例，需要一点时间）…';
+  try {
+    await fetchJson('/api/recall/verify', { method: 'POST', body: '{}' });
+    clearInterval(recallVerifyTimer);
+    recallVerifyTimer = setInterval(async () => {
+      const status = await fetchJson('/api/recall/verify/status');
+      if (status.status === 'running') return;
+      clearInterval(recallVerifyTimer);
+      button.disabled = false;
+      const report = status.report || {};
+      if (status.error) { $('#recall-verify-result').textContent = `验证出错：${status.error}`; return; }
+      const lastLines = String(report.output || '').trim().split('\n').slice(-3).join(' | ');
+      $('#recall-verify-result').textContent = report.ok
+        ? `验证通过，基线已更新。${lastLines}`
+        : `发现退化：${lastLines}`;
+      if (report.ok) notify('召回质量验证通过，基线已更新。');
+      else notify('召回质量有退化，详见模型连接页结果。', true);
+      await loadModel();
+    }, 3000);
+  } catch (error) { notify(error.message, true); button.disabled = false; }
 }
 
 async function saveModelConfig(event) {
@@ -1338,6 +1381,7 @@ function bind() {
   });
   $('#model-test-button').addEventListener('click', testModel);
   $('#config-reload-button')?.addEventListener('click', reloadConfig);
+  $('#recall-verify-button')?.addEventListener('click', startRecallVerify);
   $('#model-config-form').addEventListener('submit', saveModelConfig);
   $('#model-config-clear-key').addEventListener('change', (event) => {
     $('#model-config-key').disabled = event.target.checked;

@@ -337,6 +337,12 @@
               <dl class="model-details"><div><dt>接口格式</dt><dd id="model-api-format">—</dd></div><div><dt>API Key</dt><dd id="model-key-status">—</dd></div><div><dt>超时</dt><dd id="model-timeout">—</dd></div><div><dt>Embedding</dt><dd id="model-embedding">—</dd></div></dl>
               <button class="button button-outline model-test-button" id="model-test-button" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v4m0 10v4M3 12h4m10 0h4M5.6 5.6l2.8 2.8m7.2 7.2 2.8 2.8m0-12.8-2.8 2.8m-7.2 7.2-2.8 2.8"/></svg><span>测试模型连接</span></button>
               <button class="button button-outline" id="config-reload-button" type="button" title="重新读取 .env，无需重启"><span>重新加载配置</span></button>
+              <div class="recall-quality" id="recall-quality">
+                <div class="recall-quality-head"><strong>召回质量</strong><span id="recall-baseline-info">未建立基线</span></div>
+                <p class="health-summary-line" id="recall-baseline-note">建立基线后，每次换 embedding 模型或阈值都会自动对比，防止检索悄悄变差。</p>
+                <div class="agent-actions"><button class="button button-outline" id="recall-verify-button" type="button"><span>验证召回质量</span></button></div>
+                <p class="model-result" id="recall-verify-result"></p>
+              </div>
               <p class="model-result" id="model-result">连接状态会在这里显示。</p>
               <details class="model-config" id="model-config"><summary>配置或更换模型</summary>
                 <form id="model-config-form">

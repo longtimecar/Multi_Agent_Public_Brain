@@ -6,6 +6,8 @@ import ipaddress
 import json
 import mimetypes
 import os
+import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -19,7 +21,7 @@ from urllib.parse import parse_qs, unquote, urlparse, urlsplit
 from pydantic import ValidationError
 
 from . import agents, archive, health, openviking_import, session_import
-from .config import DEFAULT_ENV_FILE
+from .config import DEFAULT_ENV_FILE, IN_CHECKOUT, REPO_ROOT
 from .embeddings import Embedder, EmbeddingError
 from .models import Episode, Evidence, FactType, Status
 from .llm import LLMClient, LLMError
@@ -85,6 +87,8 @@ class DashboardRuntime:
         self.import_root = self.service.settings.openviking_root
         self._import_job: dict[str, Any] = {"status": "idle", "kind": None}
         self._import_lock = threading.Lock()
+        self._recall_job_lock = threading.Lock()
+        self._recall_job: dict[str, Any] = {"status": "idle", "report": None, "error": None}
 
     def import_preview(self) -> dict[str, Any]:
         return {**openviking_import.preview(self.service, self.import_root),
@@ -182,7 +186,61 @@ class DashboardRuntime:
             "embedding_base_url": self._endpoint(settings.embed_base_url),
             "embedding_api_key_set": bool(settings.embed_api_key),
             "embedding_timeout": settings.embed_timeout,
+            **self._recall_baseline_status(),
         }
+
+    def _recall_baseline_status(self) -> dict[str, Any]:
+        """Baseline info for the recall-quality card, plus a stale-model flag."""
+        baseline_path = self.service.settings.home / "state" / "recall-baseline.json"
+        try:
+            baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {"recall_baseline": None, "recall_baseline_stale": False}
+        stale = bool(baseline.get("embed_model")) and baseline.get("embed_model") != self.service.settings.embed_model
+        return {"recall_baseline": baseline, "recall_baseline_stale": stale}
+
+    def start_recall_verify(self) -> dict[str, Any]:
+        """Run the calibration script in the background and store its verdict."""
+        with self._recall_job_lock:
+            if self._recall_job["status"] == "running":
+                return dict(self._recall_job), False
+            job_id = uuid.uuid4().hex
+            self._recall_job = {"id": job_id, "status": "running", "report": None, "error": None}
+        root = REPO_ROOT if IN_CHECKOUT else Path.cwd()
+        script = root / "scripts" / "calibrate.py"
+        baseline_path = self.service.settings.home / "state" / "recall-baseline.json"
+        log_path = self.service.settings.home / ".state" / "recall-verify.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        def run() -> None:
+            try:
+                if not script.is_file():
+                    raise RuntimeError(f"calibrate.py 未找到（{script}）。从源码部署时才提供召回验证。")
+                env = os.environ.copy()
+                env["MEMBRAIN_HOME"] = str(self.service.settings.home)
+                completed = subprocess.run(
+                    [sys.executable, str(script), "--baseline-path", str(baseline_path), "--strict"],
+                    capture_output=True, text=True, timeout=600, env=env,
+                    encoding="utf-8", errors="replace",
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                report = {
+                    "exit_code": completed.returncode,
+                    "output": (completed.stdout or "")[-4000:],
+                    "error": (completed.stderr or "")[-1000:],
+                    "ok": completed.returncode == 0,
+                }
+                with self._recall_job_lock:
+                    self._recall_job = {"id": job_id, "status": "done", "report": report, "error": None}
+            except Exception as exc:
+                with self._recall_job_lock:
+                    self._recall_job = {"id": job_id, "status": "error", "report": None, "error": str(exc)}
+
+        threading.Thread(target=run, daemon=True).start()
+        return dict(self._recall_job), True
+
+    def recall_verify_status(self) -> dict[str, Any]:
+        with self._recall_job_lock:
+            return dict(self._recall_job)
 
     def _write_env(self, env_path: Path, updates: dict[str, str]) -> None:
         """Merge key/value pairs into the .env file, keeping the rest intact."""
@@ -1078,6 +1136,11 @@ def make_handler(runtime: DashboardRuntime):
                     self._json(200, runtime.reload_config())
                 elif path == "/api/health/action":
                     self._json(200, runtime.health_action(data))
+                elif path == "/api/recall/verify":
+                    job, started = runtime.start_recall_verify()
+                    self._json(202 if started else 409, job)
+                elif path == "/api/recall/verify/status":
+                    self._json(200, runtime.recall_verify_status())
                 elif path == "/api/model/embedding/test":
                     self._json(200, runtime.test_embedding())
                 elif path == "/api/model/embedding/config":

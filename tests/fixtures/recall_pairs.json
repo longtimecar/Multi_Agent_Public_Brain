@@ -1,39 +1,576 @@
 [
-  {"id":"diet-zh-positive","related":true,"subject":"dietary","fact":"Does not eat spicy food.","query":"点餐时饮食有什么注意事项？"},
-  {"id":"diet-zh-negative","related":false,"subject":"dietary","fact":"Does not eat spicy food.","query":"给我推荐一张适合剪辑视频的显卡。"},
-  {"id":"diet-en-positive","related":true,"subject":"dietary","fact":"Does not eat spicy food.","query":"Are there any dietary considerations when ordering dinner?"},
-  {"id":"diet-en-negative","related":false,"subject":"dietary","fact":"Does not eat spicy food.","query":"What pressure should I use for bicycle tires?"},
-  {"id":"diet-zh-acceptance","related":true,"subject":"dietary","fact":"Does not eat spicy food.","query":"有什么饮食上的注意事项吗"},
-  {"id":"diet-en-acceptance","related":true,"subject":"dietary","fact":"Does not eat spicy food.","query":"any dietary considerations?"},
-  {"id":"os-rover-negative","related":false,"subject":"computer","fact":"Uses Windows on the main computer.","query":"What operating system powers a Mars rover?"},
-  {"id":"music-job-negative","related":false,"subject":"music","fact":"Enjoys listening to jazz music while working.","query":"How can a musician find work in a jazz club?"},
-  {"id":"editor-video-negative","related":false,"subject":"tools","fact":"Uses Visual Studio Code as the main code editor.","query":"Which video editor should I use for a documentary?"},
-  {"id":"os-zh-positive","related":true,"subject":"computer","fact":"Uses Windows on the main computer.","query":"给我的电脑说明安装步骤时应该用什么系统？"},
-  {"id":"os-zh-negative","related":false,"subject":"computer","fact":"Uses Windows on the main computer.","query":"怎样给阳台上的植物浇水？"},
-  {"id":"style-en-positive","related":true,"subject":"communication","fact":"Prefers concise answers with no unnecessary preamble.","query":"How should you format your replies to me?"},
-  {"id":"style-en-negative","related":false,"subject":"communication","fact":"Prefers concise answers with no unnecessary preamble.","query":"How do I fix a leaking kitchen faucet?"},
-  {"id":"meeting-zh-positive","related":true,"subject":"schedule","fact":"Prefers meetings in the morning rather than the afternoon.","query":"给我安排会议时，哪个时段比较好？"},
-  {"id":"meeting-zh-negative","related":false,"subject":"schedule","fact":"Prefers meetings in the morning rather than the afternoon.","query":"这首古典乐曲是谁作的？"},
-  {"id":"language-en-positive","related":true,"subject":"programming","fact":"Uses Python for most programming projects.","query":"Which programming language should examples for my projects use?"},
-  {"id":"language-en-negative","related":false,"subject":"programming","fact":"Uses Python for most programming projects.","query":"How can I choose a comfortable office chair?"},
-  {"id":"travel-zh-positive","related":true,"subject":"travel","fact":"Prefers traveling by train instead of flying.","query":"出门旅行应该优先考虑什么交通方式？"},
-  {"id":"travel-zh-negative","related":false,"subject":"travel","fact":"Prefers traveling by train instead of flying.","query":"帮我写一个排序算法。"},
-  {"id":"coffee-en-positive","related":true,"subject":"drinks","fact":"Prefers black coffee without sugar.","query":"How do I like my coffee prepared?"},
-  {"id":"coffee-en-negative","related":false,"subject":"drinks","fact":"Prefers black coffee without sugar.","query":"Explain how to backup a computer hard drive."},
-  {"id":"city-zh-positive","related":true,"subject":"home","fact":"Lives in Shanghai.","query":"我住在哪个城市？"},
-  {"id":"city-zh-negative","related":false,"subject":"home","fact":"Lives in Shanghai.","query":"如何清理浏览器缓存？"},
-  {"id":"keyboard-en-positive","related":true,"subject":"equipment","fact":"Uses a mechanical keyboard with quiet switches.","query":"What kind of keyboard do I use?"},
-  {"id":"keyboard-en-negative","related":false,"subject":"equipment","fact":"Uses a mechanical keyboard with quiet switches.","query":"Suggest a vegetarian dinner menu."},
-  {"id":"editor-zh-positive","related":true,"subject":"tools","fact":"Uses Visual Studio Code as the main code editor.","query":"我的主要代码编辑器是什么？"},
-  {"id":"editor-zh-negative","related":false,"subject":"tools","fact":"Uses Visual Studio Code as the main code editor.","query":"今年的日历有多少个月？"},
-  {"id":"music-en-positive","related":true,"subject":"music","fact":"Enjoys listening to jazz music while working.","query":"What music does the user like to listen to at work?"},
-  {"id":"music-en-negative","related":false,"subject":"music","fact":"Enjoys listening to jazz music while working.","query":"What is a good way to remove a wine stain?"},
-  {"id":"language-zh-positive","related":true,"subject":"languages","fact":"Reads both Chinese and English.","query":"我能阅读哪些语言？"},
-  {"id":"language-zh-negative","related":false,"subject":"languages","fact":"Reads both Chinese and English.","query":"笔记本电脑电池怎么保养？"},
-  {"id":"project-en-positive","related":true,"subject":"project","fact":"Building a personal memory tool called Membrain.","query":"What personal memory project am I working on?"},
-  {"id":"project-en-negative","related":false,"subject":"project","fact":"Building a personal memory tool called Membrain.","query":"What's the simplest way to bake bread?"},
-  {"id":"units-zh-positive","related":true,"subject":"measurement","fact":"Prefers metric units for measurements.","query":"给我距离和重量时应该使用什么单位？"},
-  {"id":"units-zh-negative","related":false,"subject":"measurement","fact":"Prefers metric units for measurements.","query":"讲讲摄影中的光圈。"},
-  {"id":"hobby-en-positive","related":true,"subject":"hobbies","fact":"Enjoys taking landscape photographs.","query":"What kind of photography is the user interested in?"},
-  {"id":"hobby-en-negative","related":false,"subject":"hobbies","fact":"Enjoys taking landscape photographs.","query":"How do I configure a database server?"}
+  {
+    "id": "diet-zh-positive",
+    "related": true,
+    "subject": "dietary",
+    "fact": "Does not eat spicy food.",
+    "query": "点餐时饮食有什么注意事项？"
+  },
+  {
+    "id": "diet-zh-negative",
+    "related": false,
+    "subject": "dietary",
+    "fact": "Does not eat spicy food.",
+    "query": "给我推荐一张适合剪辑视频的显卡。"
+  },
+  {
+    "id": "diet-en-positive",
+    "related": true,
+    "subject": "dietary",
+    "fact": "Does not eat spicy food.",
+    "query": "Are there any dietary considerations when ordering dinner?"
+  },
+  {
+    "id": "diet-en-negative",
+    "related": false,
+    "subject": "dietary",
+    "fact": "Does not eat spicy food.",
+    "query": "What pressure should I use for bicycle tires?"
+  },
+  {
+    "id": "diet-zh-acceptance",
+    "related": true,
+    "subject": "dietary",
+    "fact": "Does not eat spicy food.",
+    "query": "有什么饮食上的注意事项吗"
+  },
+  {
+    "id": "diet-en-acceptance",
+    "related": true,
+    "subject": "dietary",
+    "fact": "Does not eat spicy food.",
+    "query": "any dietary considerations?"
+  },
+  {
+    "id": "os-rover-negative",
+    "related": false,
+    "subject": "computer",
+    "fact": "Uses Windows on the main computer.",
+    "query": "What operating system powers a Mars rover?"
+  },
+  {
+    "id": "music-job-negative",
+    "related": false,
+    "subject": "music",
+    "fact": "Enjoys listening to jazz music while working.",
+    "query": "How can a musician find work in a jazz club?"
+  },
+  {
+    "id": "editor-video-negative",
+    "related": false,
+    "subject": "tools",
+    "fact": "Uses Visual Studio Code as the main code editor.",
+    "query": "Which video editor should I use for a documentary?"
+  },
+  {
+    "id": "os-zh-positive",
+    "related": true,
+    "subject": "computer",
+    "fact": "Uses Windows on the main computer.",
+    "query": "给我的电脑说明安装步骤时应该用什么系统？"
+  },
+  {
+    "id": "os-zh-negative",
+    "related": false,
+    "subject": "computer",
+    "fact": "Uses Windows on the main computer.",
+    "query": "怎样给阳台上的植物浇水？"
+  },
+  {
+    "id": "style-en-positive",
+    "related": true,
+    "subject": "communication",
+    "fact": "Prefers concise answers with no unnecessary preamble.",
+    "query": "How should you format your replies to me?"
+  },
+  {
+    "id": "style-en-negative",
+    "related": false,
+    "subject": "communication",
+    "fact": "Prefers concise answers with no unnecessary preamble.",
+    "query": "How do I fix a leaking kitchen faucet?"
+  },
+  {
+    "id": "meeting-zh-positive",
+    "related": true,
+    "subject": "schedule",
+    "fact": "Prefers meetings in the morning rather than the afternoon.",
+    "query": "给我安排会议时，哪个时段比较好？"
+  },
+  {
+    "id": "meeting-zh-negative",
+    "related": false,
+    "subject": "schedule",
+    "fact": "Prefers meetings in the morning rather than the afternoon.",
+    "query": "这首古典乐曲是谁作的？"
+  },
+  {
+    "id": "language-en-positive",
+    "related": true,
+    "subject": "programming",
+    "fact": "Uses Python for most programming projects.",
+    "query": "Which programming language should examples for my projects use?"
+  },
+  {
+    "id": "language-en-negative",
+    "related": false,
+    "subject": "programming",
+    "fact": "Uses Python for most programming projects.",
+    "query": "How can I choose a comfortable office chair?"
+  },
+  {
+    "id": "travel-zh-positive",
+    "related": true,
+    "subject": "travel",
+    "fact": "Prefers traveling by train instead of flying.",
+    "query": "出门旅行应该优先考虑什么交通方式？"
+  },
+  {
+    "id": "travel-zh-negative",
+    "related": false,
+    "subject": "travel",
+    "fact": "Prefers traveling by train instead of flying.",
+    "query": "帮我写一个排序算法。"
+  },
+  {
+    "id": "coffee-en-positive",
+    "related": true,
+    "subject": "drinks",
+    "fact": "Prefers black coffee without sugar.",
+    "query": "How do I like my coffee prepared?"
+  },
+  {
+    "id": "coffee-en-negative",
+    "related": false,
+    "subject": "drinks",
+    "fact": "Prefers black coffee without sugar.",
+    "query": "Explain how to backup a computer hard drive."
+  },
+  {
+    "id": "city-zh-positive",
+    "related": true,
+    "subject": "home",
+    "fact": "Lives in Shanghai.",
+    "query": "我住在哪个城市？"
+  },
+  {
+    "id": "city-zh-negative",
+    "related": false,
+    "subject": "home",
+    "fact": "Lives in Shanghai.",
+    "query": "如何清理浏览器缓存？"
+  },
+  {
+    "id": "keyboard-en-positive",
+    "related": true,
+    "subject": "equipment",
+    "fact": "Uses a mechanical keyboard with quiet switches.",
+    "query": "What kind of keyboard do I use?"
+  },
+  {
+    "id": "keyboard-en-negative",
+    "related": false,
+    "subject": "equipment",
+    "fact": "Uses a mechanical keyboard with quiet switches.",
+    "query": "Suggest a vegetarian dinner menu."
+  },
+  {
+    "id": "editor-zh-positive",
+    "related": true,
+    "subject": "tools",
+    "fact": "Uses Visual Studio Code as the main code editor.",
+    "query": "我的主要代码编辑器是什么？"
+  },
+  {
+    "id": "editor-zh-negative",
+    "related": false,
+    "subject": "tools",
+    "fact": "Uses Visual Studio Code as the main code editor.",
+    "query": "今年的日历有多少个月？"
+  },
+  {
+    "id": "music-en-positive",
+    "related": true,
+    "subject": "music",
+    "fact": "Enjoys listening to jazz music while working.",
+    "query": "What music does the user like to listen to at work?"
+  },
+  {
+    "id": "music-en-negative",
+    "related": false,
+    "subject": "music",
+    "fact": "Enjoys listening to jazz music while working.",
+    "query": "What is a good way to remove a wine stain?"
+  },
+  {
+    "id": "language-zh-positive",
+    "related": true,
+    "subject": "languages",
+    "fact": "Reads both Chinese and English.",
+    "query": "我能阅读哪些语言？"
+  },
+  {
+    "id": "language-zh-negative",
+    "related": false,
+    "subject": "languages",
+    "fact": "Reads both Chinese and English.",
+    "query": "笔记本电脑电池怎么保养？"
+  },
+  {
+    "id": "project-en-positive",
+    "related": true,
+    "subject": "project",
+    "fact": "Building a personal memory tool called Membrain.",
+    "query": "What personal memory project am I working on?"
+  },
+  {
+    "id": "project-en-negative",
+    "related": false,
+    "subject": "project",
+    "fact": "Building a personal memory tool called Membrain.",
+    "query": "What's the simplest way to bake bread?"
+  },
+  {
+    "id": "units-zh-positive",
+    "related": true,
+    "subject": "measurement",
+    "fact": "Prefers metric units for measurements.",
+    "query": "给我距离和重量时应该使用什么单位？"
+  },
+  {
+    "id": "units-zh-negative",
+    "related": false,
+    "subject": "measurement",
+    "fact": "Prefers metric units for measurements.",
+    "query": "讲讲摄影中的光圈。"
+  },
+  {
+    "id": "hobby-en-positive",
+    "related": true,
+    "subject": "hobbies",
+    "fact": "Enjoys taking landscape photographs.",
+    "query": "What kind of photography is the user interested in?"
+  },
+  {
+    "id": "hobby-en-negative",
+    "related": false,
+    "subject": "hobbies",
+    "fact": "Enjoys taking landscape photographs.",
+    "query": "How do I configure a database server?"
+  },
+  {
+    "id": "zh-diet-taboo",
+    "subject": "diet",
+    "fact": "我不吃辣，任何带辣椒的菜都不行。",
+    "query": "饮食禁忌有哪些",
+    "related": true
+  },
+  {
+    "id": "zh-pet-name",
+    "subject": "pet",
+    "fact": "我养了一只叫团子的橘猫。",
+    "query": "我家宠物叫什么",
+    "related": true
+  },
+  {
+    "id": "zh-editor-switch",
+    "subject": "editor",
+    "fact": "我现在写代码主要用 Cursor，从 VSCode 迁移过来了。",
+    "query": "平时用什么编辑器",
+    "related": true
+  },
+  {
+    "id": "zh-sleep-time",
+    "subject": "habit",
+    "fact": "我通常晚上十一点半睡觉，早上七点起床。",
+    "query": "作息时间是怎么安排的",
+    "related": true
+  },
+  {
+    "id": "zh-allergy-seafood",
+    "subject": "diet",
+    "fact": "我对虾蟹过敏，吃了会起疹子。",
+    "query": "有什么不能吃的",
+    "related": true
+  },
+  {
+    "id": "zh-transport-metro",
+    "subject": "habit",
+    "fact": "我上班每天坐地铁十号线，通勤四十分钟。",
+    "query": "怎么去上班的",
+    "related": true
+  },
+  {
+    "id": "zh-mother-name",
+    "subject": "family",
+    "fact": "我妈妈叫王秀兰，退休前是中学老师。",
+    "query": "母亲的名字",
+    "related": true
+  },
+  {
+    "id": "zh-project-membrain",
+    "subject": "project",
+    "fact": "我正在开发 membrain，一个跨 Agent 的个人记忆系统。",
+    "query": "最近在做什么项目",
+    "related": true
+  },
+  {
+    "id": "zh-coffee-pref",
+    "subject": "drink",
+    "fact": "我早上必须喝一杯美式咖啡，不加糖。",
+    "query": "喝咖啡的习惯",
+    "related": true
+  },
+  {
+    "id": "zh-birthday",
+    "subject": "personal",
+    "fact": "我的生日是 1995 年 8 月 23 号。",
+    "query": "什么时候出生的",
+    "related": true
+  },
+  {
+    "id": "en-zh-cat",
+    "subject": "pet",
+    "fact": "我养了一只叫团子的橘猫。",
+    "query": "Do I have any pets",
+    "related": true
+  },
+  {
+    "id": "zh-en-editor",
+    "subject": "editor",
+    "fact": "我现在写代码主要用 Cursor。",
+    "query": "which code editor do I use",
+    "related": true
+  },
+  {
+    "id": "en-zh-city",
+    "subject": "location",
+    "fact": "我住在杭州，滨江那边。",
+    "query": "where do I live",
+    "related": true
+  },
+  {
+    "id": "zh-en-job",
+    "subject": "work",
+    "fact": "我是做后端开发的，主要写 Python。",
+    "query": "what is my job",
+    "related": true
+  },
+  {
+    "id": "en-zh-book",
+    "subject": "hobby",
+    "fact": "我最近在读《三体》，第三部了。",
+    "query": "any book recommendations based on my reading",
+    "related": true
+  },
+  {
+    "id": "zh-state-gym",
+    "subject": "habit",
+    "fact": "我最近办了健身卡，每周去三次。",
+    "query": "我有运动习惯吗",
+    "related": true
+  },
+  {
+    "id": "zh-state-quit",
+    "subject": "habit",
+    "fact": "我已经戒烟半年了。",
+    "query": "我还抽烟吗",
+    "related": true
+  },
+  {
+    "id": "zh-state-single",
+    "subject": "personal",
+    "fact": "我现在单身，去年分手的。",
+    "query": "我的感情状态",
+    "related": true
+  },
+  {
+    "id": "zh-multihop-food",
+    "subject": "diet",
+    "fact": "医生让我少吃海鲜，因为尿酸高。",
+    "query": "上次说不能吃什么来着",
+    "related": true
+  },
+  {
+    "id": "zh-multihop-plan",
+    "subject": "project",
+    "fact": "membrain 项目计划下周发布到 GitHub。",
+    "query": "我之前说的发布计划是什么",
+    "related": true
+  },
+  {
+    "id": "zh-multihop-pref",
+    "subject": "drink",
+    "fact": "我在会上说过我只喝无糖的茶。",
+    "query": "记得我说过喝什么吗",
+    "related": true
+  },
+  {
+    "id": "en-allergy-nuts",
+    "subject": "diet",
+    "fact": "I am allergic to peanuts and tree nuts.",
+    "query": "any food allergies",
+    "related": true
+  },
+  {
+    "id": "en-gym-routine",
+    "subject": "habit",
+    "fact": "I go to the gym three times a week.",
+    "query": "what is my exercise routine",
+    "related": true
+  },
+  {
+    "id": "en-meeting-style",
+    "subject": "work",
+    "fact": "I prefer short standup meetings over long email threads.",
+    "query": "how do I like meetings",
+    "related": true
+  },
+  {
+    "id": "en-kid-name",
+    "subject": "family",
+    "fact": "My daughter is named Lucy, she is three years old.",
+    "query": "do I have children",
+    "related": true
+  },
+  {
+    "id": "neg-weather",
+    "subject": "smalltalk",
+    "fact": "今天天气不错，适合出门走走。",
+    "query": "帮我写一个快速排序算法",
+    "related": false
+  },
+  {
+    "id": "neg-code-sort",
+    "subject": "coding",
+    "fact": "这个函数的时间复杂度是 O(n log n)。",
+    "query": "外面下雨了吗",
+    "related": false
+  },
+  {
+    "id": "neg-recipe",
+    "subject": "cooking",
+    "fact": "红烧肉要先焯水再炖。",
+    "query": "推荐一部科幻电影",
+    "related": false
+  },
+  {
+    "id": "neg-weather-ask",
+    "subject": "smalltalk",
+    "fact": "明天出门记得带伞。",
+    "query": "量子力学的基本原理是什么",
+    "related": false
+  },
+  {
+    "id": "neg-math",
+    "subject": "general",
+    "fact": "圆周率约等于 3.14159。",
+    "query": "帮我写一个 Python 爬虫",
+    "related": false
+  },
+  {
+    "id": "neg-traffic",
+    "subject": "smalltalk",
+    "fact": "这段路高峰期很堵。",
+    "query": "我该几点起床",
+    "related": false
+  },
+  {
+    "id": "neg-poem",
+    "subject": "culture",
+    "fact": "床前明月光，疑是地上霜。",
+    "query": "我的信用卡账单是多少",
+    "related": false
+  },
+  {
+    "id": "neg-joke",
+    "subject": "smalltalk",
+    "fact": "为什么程序员分不清万圣节和圣诞节？",
+    "query": "我对花粉过敏吗",
+    "related": false
+  },
+  {
+    "id": "neg-stock",
+    "subject": "finance",
+    "fact": "这只股票今天涨停了。",
+    "query": "帮我订一个明天的会议室",
+    "related": false
+  },
+  {
+    "id": "neg-translate",
+    "subject": "language",
+    "fact": "Good morning 翻译成中文是你好。",
+    "query": "我最喜欢哪个球队",
+    "related": false
+  },
+  {
+    "id": "neg-atom",
+    "subject": "science",
+    "fact": "水分子由两个氢原子和一个氧原子组成。",
+    "query": "我上周说了什么",
+    "related": false
+  },
+  {
+    "id": "neg-guitar",
+    "subject": "music",
+    "fact": "吉他的标准调弦是 EADGBE。",
+    "query": "我住哪个城市",
+    "related": false
+  },
+  {
+    "id": "neg-password",
+    "subject": "tech",
+    "fact": "强密码应该包含大小写字母和数字。",
+    "query": "我妈做什么工作",
+    "related": false
+  },
+  {
+    "id": "neg-mountain",
+    "subject": "geography",
+    "fact": "珠穆朗玛峰海拔 8848 米。",
+    "query": "我的生日是哪天",
+    "related": false
+  },
+  {
+    "id": "neg-plant",
+    "subject": "life",
+    "fact": "多肉植物两周浇一次水就够了。",
+    "query": "我的通勤方式",
+    "related": false
+  },
+  {
+    "id": "neg-battery",
+    "subject": "tech",
+    "fact": "锂电池不能过度放电。",
+    "query": "我的健身频率",
+    "related": false
+  },
+  {
+    "id": "neg-cooking-oil",
+    "subject": "cooking",
+    "fact": "橄榄油不适合高温爆炒。",
+    "query": "我最近在读什么书",
+    "related": false
+  },
+  {
+    "id": "neg-planet",
+    "subject": "science",
+    "fact": "火星有两颗卫星。",
+    "query": "我的感情状况",
+    "related": false
+  },
+  {
+    "id": "neg-keyboard",
+    "subject": "tech",
+    "fact": "机械键盘的青轴段落感很强。",
+    "query": "我对什么过敏",
+    "related": false
+  },
+  {
+    "id": "neg-cloud",
+    "subject": "tech",
+    "fact": "云存储的可用性通常是三个九。",
+    "query": "我喝咖啡加糖吗",
+    "related": false
+  }
 ]
