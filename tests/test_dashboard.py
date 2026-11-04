@@ -599,3 +599,57 @@ def test_health_supersede_merges_evidence_and_retracts(tmp_path):
     assert retracted["ok"]
     assert service.store.get_fact(a.id).status.value == "retracted"
     service.index.close()
+
+
+def test_rag_upload_accepts_bodies_over_64kb_and_lists_document(dashboard):
+    import base64
+
+    request, service = dashboard
+    body = ("段落内容。" * 12000)[:90_000]  # ~90KB UTF-8 text, over the 64KB generic cap
+    payload = {"filename": "big-note.txt", "data": base64.b64encode(body.encode("utf-8")).decode("ascii")}
+    status, _, raw = request("/api/rag/upload", payload)
+    assert status == 201, raw[:200]
+    doc = json.loads(raw)
+    assert doc["chunks"] >= 1
+
+    status, _, raw = request("/api/rag/documents")
+    assert status == 200
+    docs = json.loads(raw)["documents"]
+    assert any(d["id"] == doc["id"] for d in docs)
+
+    status, _, raw = request("/api/rag/doc/" + doc["id"])
+    assert status == 200
+    detail = json.loads(raw)
+    assert detail["chunk_list"] and detail["chunk_list"][0]["text"]
+
+    status, _, raw = request("/api/rag/delete", {"id": doc["id"]})
+    assert status == 200 and json.loads(raw)["ok"] is True
+    _, _, raw = request("/api/rag/documents")
+    assert not any(d["id"] == doc["id"] for d in json.loads(raw)["documents"])
+
+
+def test_rag_upload_accepts_bodies_over_64kb_and_lists_document(dashboard):
+    import base64
+
+    request, service = dashboard
+    body = ("段落内容。" * 12000)[:90_000]  # ~90KB UTF-8 text, over the 64KB generic cap
+    payload = {"filename": "big-note.txt", "data": base64.b64encode(body.encode("utf-8")).decode("ascii")}
+    status, _, raw = request("/api/rag/upload", payload)
+    assert status == 201, raw[:200]
+    doc = json.loads(raw)
+    assert doc["chunks"] >= 1
+
+    status, _, raw = request("/api/rag/documents")
+    assert status == 200
+    docs = json.loads(raw)["documents"]
+    assert any(d["id"] == doc["id"] for d in docs)
+
+    status, _, raw = request("/api/rag/doc/" + doc["id"])
+    assert status == 200
+    detail = json.loads(raw)
+    assert detail["chunk_list"] and detail["chunk_list"][0]["text"]
+
+    status, _, raw = request("/api/rag/delete", {"id": doc["id"]})
+    assert status == 200 and json.loads(raw)["ok"] is True
+    _, _, raw = request("/api/rag/documents")
+    assert not any(d["id"] == doc["id"] for d in json.loads(raw)["documents"])

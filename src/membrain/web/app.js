@@ -858,6 +858,13 @@ async function loadAgents() {
     $('#agent-grid').innerHTML = `<div class="empty-state"><div class="empty-mark">A</div><h3>扫描失败</h3><p>${escapeHtml(error.message)}</p></div>`;
     notify(error.message, true);
   }
+  fetchJson('/api/watcher').then((w) => {
+    const note = $('#agents-watcher-note');
+    if (note && w) {
+      const last = w.last_run ? ` · 最近捕获 ${w.last_run.captured} 条` : '';
+      note.textContent = `自动捕获：${w.enabled ? '后台运行中，接入的 Agent 对话会被自动记录提炼' : '已关闭（MEMBRAIN_WATCH=0）'}${last}`;
+    }
+  }).catch(() => {});
 }
 
 // Auto-rescan so install/uninstall shows up without clicking 重新扫描.
@@ -1343,6 +1350,10 @@ async function openRagDoc(id) {
 async function uploadRagFiles(fileList) {
   const files = [...(fileList || [])];
   if (!files.length) return;
+  if (state.ragUploading) { notify('正在上传中，请稍候。'); return; }
+  state.ragUploading = true;
+  const button = $('#rag-upload-button');
+  if (button) { button.disabled = true; button.textContent = '导入中…'; }
   notify(`正在导入 ${files.length} 个文件（解析 → 分块 → 向量化）…`);
   let ok = 0;
   for (const file of files) {
@@ -1356,6 +1367,8 @@ async function uploadRagFiles(fileList) {
       ok += 1;
     } catch (error) { notify(`${file.name}：${error.message}`, true); }
   }
+  state.ragUploading = false;
+  if (button) { button.disabled = false; button.textContent = '选择文件'; }
   notify(`已导入 ${ok} / ${files.length} 个文件`);
   loadRag();
 }

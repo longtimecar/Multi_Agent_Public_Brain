@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .resources import import_resource, list_resources, parse_resource, resources_root
+from .resources import import_resource, parse_resource_uri, resources_root
 
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 120
@@ -214,22 +214,12 @@ def ingest_text(*, home: Path, body: str, category: str = "docs", title: str | N
     text = (body or "").strip()
     if not text:
         raise ValueError("文档内容为空。")
-    import_resource(home, body=text, category=category, title=title, source_path=source_path, origin="upload")
-    # Re-read what import_resource persisted to get the canonical id/uri.
-    newest = sorted((resources_root(home) / category.lstrip("/")).glob("*.md"),
-                    key=lambda p: p.stat().st_mtime, reverse=True)[:5]
-    rid = title or ""
-    uri = ""
-    abstract = ""
-    for path in newest:
-        try:
-            entry = parse_resource(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        if entry.body.strip() == text.strip() or (title and entry.title == title):
-            rid, uri, abstract = entry.id, entry.uri, entry.abstract
-            break
-    if not rid or rid == (title or ""):
+    written = import_resource(home, body=text, category=category, title=title,
+                              source_path=source_path, origin="upload")
+    rid = str(written.get("id") or "")
+    uri = str(written.get("uri") or "")
+    abstract = str(written.get("abstract") or "")
+    if not rid:
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:10]
         rid = f"r_{datetime.now(timezone.utc):%Y%m%d}_{digest}"
         uri = f"mb://user/resources/{category}/{digest}"
@@ -356,8 +346,6 @@ def delete_document(home: Path, doc_id: str) -> bool:
         conn.close()
     uri = str(row["uri"] or "")
     if uri.startswith("mb://user/resources/"):
-        from .resources import parse_resource_uri
-
         parsed = parse_resource_uri(uri)
         candidate = resources_root(home) / str(parsed["category"] or "") / f"{parsed['subject'] or ''}.md"
         if candidate.exists():
