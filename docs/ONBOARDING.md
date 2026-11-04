@@ -286,7 +286,134 @@ uv run python scripts/calibrate.py # 召回质量回归（82 组中英文黄金�
 
 ---
 
-## 9. 升级方向与注意事项
+## 9. Agent 体系详解
+
+membrain 本身不是 Agent——它是 **Agent 的大脑外挂**。"Agent" 在本项目里指任何
+接入了 membrain 的 AI 助手程序（Claude Code、Codex、Cursor、千问……），以及
+Dashboard 内置的**记忆管理员**。这一节说明它们如何被发现、接入、工作，以及能力边界。
+
+### 9.1 核心组成部分
+
+| 组件 | 文件 | 职责 |
+|---|---|---|
+| **发现与接入框架** | `agents.py` | 扫描本机已安装的 Agent（内置 13 个清单 + 关键词兜底 + Windows 卸载列表）；一键接入/断开（备份后写/删 MCP 配置）；隔离清单判定 |
+| **hooks 捕获通道** | `hooks.py` + `scripts/hook.py` | Claude Code / Codex 专用：把 Agent 的生命周期事件转成捕获与召回动作 |
+| **MCP 能力面** | `server.py` | 13 个 MCP 工具，是所有 relay 型 Agent 的唯一能力入口 |
+| **记忆管理员** | `dashboard.py::chat` | Dashboard 内置对话 Agent：JSON 动作循环，能自主多步操作记忆 |
+| **隔离机制** | `state/disabled-agents.json` + retrieval 过滤 | 断开接入后历史记忆隐藏、新捕获拒绝，重连即恢复 |
+
+四者的关系：**发现框架**决定"谁能进来"，**两条通道**（hooks / MCP）决定"怎么进来"，
+**能力面**决定"进来后能做什么"，**隔离机制**决定"出去了之后留下什么"。
+
+### 9.2 Agent 发现：三种识别手段
+
+`agents.py::scan` 每次调用都实时扫描，无缓存：
+
+1. **内置清单（SPECS）**：13 个 Agent 的特征（PATH 目录、PATH 命令）。
+   桌面应用额外要求 Windows 卸载列表仍存在（`needs_uninstaller`）——防止"卸载后残留
+   数据目录被误判为已安装"（豆包案例）。
+2. **关键词兜底**：扫描卸载列表和 AppData 目录名，命中 KEYWORDS（claude/qwen/kimi/…）
+   但不在清单里的，以"其他发现（other:*）"呈现——新 Agent 至少能被报出名字。
+3. **不可编辑判定**：配置在应用 UI 里（Trae/Qoder/千问/DeepSeek Harness）的 Agent
+   标记为"需手动接入"，只提供提示词，绝不盲写配置。
+
+### 9.3 两种接入模式的工作机制
+
+**模式 A：hooks 自动捕获（Claude Code / Codex）**
+
+```
+用户输入 → Agent 事件钩子 → scripts/hook.py → membrain.cli hook → hooks.py::run
+  SessionStart        → 组装记忆注入块（profile + 检索结果，带去重指纹）注入上下文
+  UserPromptSubmit    → record_prompt：用户原话写成 episode（入口即剥注入块）
+  Stop / PreCompact   → capture：转录差分捕获 + 触发后台提取/归档
+  SessionEnd          → capture 收尾
+```
+
+- `scripts/hook.py` 是垫片：`setdefault(MEMBRAIN_HOME)` 后 re-exec 到项目 venv，
+  所以 Agent 配置里只需要一行命令。
+- 特点：**用户无感**，捕获全自动；代价是修改 Agent 的配置文件（受保护，只给提示词）。
+
+**模式 B：MCP relay（其余所有 Agent）**
+
+```
+Agent 的 MCP 配置里加 membrain（stdio 子进程）→ 模型在对话中按 RELAY_RULE 调用：
+  每轮先 record_user_message(用户原话, agent=自己的名字)
+  需要回忆时调 search_memory
+```
+
+- 特点：**零配置侵入**（不动 Agent 文件的 hooks），但依赖模型自觉调用工具；
+  规则文本（`agents.py::RELAY_RULE`）通过提示词/长期指令下发给 Agent。
+
+**模式 C：Dashboard 记忆管理员（内置）**
+
+```
+用户在 Dashboard 聊天 → JSON 动作循环（最多 5 轮）：
+  模型返回 {"action":"search|detail|stats|list_contested|correct|retract|record|reply","args":{…}}
+  服务端白名单执行（证据校验同 MCP 层）→ 结果回传 → 下一轮 → reply 结束
+```
+
+- 特点：受控的 agentic loop——能自主多步（先 search 再 correct），但动作面被服务端
+  白名单限制，`record` 的 quote 必须逐字来自用户本轮消息。
+
+### 9.4 能力边界
+
+**Agent 能做的（MCP 工具 = 全部能力面）**
+
+| 工具 | 能力 | 关键校验 |
+|---|---|---|
+| `record_user_message` | 记录用户原话为 episode | 清洗注入块；隔离中的 Agent 被拒绝 |
+| `search_memory` | 语义+全文混合召回 | 敏感/隔离/已撤回记忆不可见；衰减注入生效 |
+| `find_memory` / `find_user_evidence` | 按精确引用找证据回合 | 为 correct/write 准备证据 |
+| `write_memory` | 写新记忆 | 类型限白名单（无 constraint）；quote 必须来自真实用户回合 |
+| `correct_memory` | 更正或撤回一条记忆 | 必须引用该记忆来源回合里的**逐字原话**做理由；constraint 拒绝 |
+| `search_archive` / `browse_archive` / `read_archive` | 检索资料库（长文档层） | 只读 |
+| `read_memory_diff` | 读会话归档的记忆差异 | 只读 |
+| `list_contested` / `get_profile` / `memory_stats` | 状态查询 | 只读 |
+
+**Agent 不能做的（设计边界，全部服务端强制）**
+
+| 禁区 | 原因 |
+|---|---|
+| 写、改、撤 **constraint**（硬约束） | 硬约束是用户的红线，只有本人能在 L2 详情操作 |
+| 无证据写入 | "No quote, no write"——伪造 quote 会被逐字校验拒绝 |
+| 读取敏感记忆（默认） | 宗教/政治/信仰类只在查询主题明确相关时放开 |
+| 修改 fact 文件 / 裁决冲突 | append-only：变化只能走 ledger；resolve 是人类专属 |
+| 越过隔离 | 断开的 Agent 连自己的历史都看不到，重连才恢复 |
+| 直接访问文件系统 | 一切经过 MCP 工具的参数校验；没有"打开文件"类能力 |
+
+**管理员 Agent 的额外边界**：动作面被白名单收敛为 8 个动作；模型编造 memory_id、
+伪造 quote、JSON 不合规都会被拒绝并要求重试；连续 2 次无效输出即降级为固定提示，
+绝不带病写入。
+
+### 9.5 生命周期：接入 → 活跃 → 断开 → 恢复
+
+```mermaid
+stateDiagram-v2
+    [*] --> installed: 扫描发现已安装
+    installed --> connected: 一键接入（写 MCP 配置）
+    installed --> manual: 配置在应用 UI 里（复制提示词）
+    connected --> isolated: 断开接入（移除配置+隔离）
+    manual --> connected: 用户手动配置后
+    isolated --> connected: 重新接入（自动解除隔离）
+    connected --> [*]
+```
+
+- **connected**：正常捕获与召回。
+- **isolated**：该 Agent 的历史记忆从所有召回/列表隐藏（数据不删）、新捕获被拒绝；
+  卡片显示"已隔离"。
+- 关键不变量：**隔离是查询层的窗帘，不是数据层的删除**——任何时候重连，记忆原样回来。
+
+### 9.6 与其他部分的关系
+
+- **衰减注入（5.3）对所有 Agent 一致**：无论 hooks 还是 relay，召回注入的详细度都由
+  服务端按"30 天使用窗口"决定——Agent 不需要、也不应该自己实现遗忘。
+- **置信度与冲突**是共享状态：一个 Agent 写入的记忆如果与另一个 Agent 的记忆矛盾，
+  冲突对会被标记并在健康中心/冲突页呈现给人类。
+- **隔离清单**由 Dashboard 维护，MCP 层与 hooks 层都读它——三个入口的边界一致。
+
+---
+
+## 10. 升级方向与注意事项
 
 ### 9.1 路线图（按 PLAN.md 与当前进度）
 
