@@ -136,9 +136,16 @@ def test_deepseek_and_doubao_are_recognised_as_real_agents(tmp_path):
     roaming = tmp_path / "Roaming"
     (roaming / "DeepSeek Bot").mkdir(parents=True)
     (roaming / "Doubao").mkdir(parents=True)
-    items = _scan(tmp_path)
+    items = _scan(tmp_path, registry=["Doubao 5.6.0"])
     assert items["deepseek"]["installed"] and items["deepseek"]["status"] == "not_connected"
     assert items["doubao"]["installed"] and items["doubao"]["status"] == "not_connected"
+
+
+def test_a_doubao_data_dir_left_after_uninstall_is_not_installed(tmp_path):
+    # The desktop app is gone from the uninstall list; only its data dir survived.
+    (tmp_path / "Roaming" / "Doubao").mkdir(parents=True)
+    items = _scan(tmp_path)
+    assert items["doubao"]["installed"] is False
 
 
 def test_deepseek_harness_is_found_in_the_local_app_data_folder(tmp_path):

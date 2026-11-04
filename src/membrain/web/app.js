@@ -897,7 +897,7 @@ function renderSessionImport(prev) {
   card.innerHTML = `<h3>Agent 会话导入 · LLM 清洗提炼</h3>
     <p class="import-note">自动发现本机 Agent 的历史会话（源只读），一键导入后由 LLM 识别分类、生成标题与 L0 摘要；纯问候/空会话/系统回执等噪声直接丢弃。落库后按 Agent→类别出现在资料库。</p>
     <div class="import-actions"><button class="button button-dark" id="session-import-start" type="button" ${actionable ? '' : 'disabled'}>${actionLabel}</button>
-    <label class="check-inline"><input type="checkbox" id="session-import-distill"> 同时提炼为短记忆（默认关，防闲聊污染）</label>
+    <label class="check-inline"><input type="checkbox" id="session-import-distill"> 同时提炼为短记忆 <span class="import-note">（默认关闭：历史会话大多为闲聊和临时上下文，勾选后 LLM 才会把其中值得长期保存的信息写成记忆条目；不勾则只进资料库，不影响记忆库）</span></label>
     <span class="import-note" id="session-import-status"></span></div>
     ${rows}`;
   $('#session-import-start')?.addEventListener('click', startSessionImport);

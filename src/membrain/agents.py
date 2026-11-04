@@ -39,6 +39,7 @@ class AgentSpec:
     protected: bool = False                # project rules require owner approval to edit
     capture: str = "relay"                 # "hooks" captures by itself; "relay" needs the tool
     where: str = "在该软件的 MCP / 工具设置里新增一个自定义 MCP 服务"
+    needs_uninstaller: bool = False        # desktop apps: leftover data dirs must not count as installed
 
 
 SPECS: tuple[AgentSpec, ...] = (
@@ -66,7 +67,7 @@ SPECS: tuple[AgentSpec, ...] = (
               config="~/.deepseek-harness/mcp.json"),
     AgentSpec("doubao", "Doubao", ("doubao",),
               paths=("%APPDATA%/Doubao", "~/.doubao"),
-              config="~/.doubao/mcp.json"),
+              config="~/.doubao/mcp.json", needs_uninstaller=True),
     AgentSpec("qwen", "千问 (Qwen)", ("qwen", "qianwen", "千问"),
               paths=("%LOCALAPPDATA%/Qianwen", "%LOCALAPPDATA%/QianwenUpdater", "~/.qwen-agent"),
               where="在千问的 设置 → MCP / 工具 里新增一个自定义 MCP 服务"),
@@ -141,9 +142,19 @@ def server_entry(style: str, memory_home: Path) -> dict[str, Any]:
     return {"command": command[0], "args": command[1:], "env": env}
 
 
-def _installed(spec: AgentSpec, home: Path, appdata: Path, which: Callable[[str], str | None]) -> bool:
-    return any(which(c) for c in spec.commands) or any(
-        _resolve(p, home, appdata).exists() for p in spec.paths)
+def _installed(spec: AgentSpec, home: Path, appdata: Path, which: Callable[[str], str | None],
+               registry_names: Iterable[str] = ()) -> bool:
+    if any(which(c) for c in spec.commands):
+        return True
+    if not any(_resolve(p, home, appdata).exists() for p in spec.paths):
+        return False
+    if spec.needs_uninstaller:
+        # A desktop app whose data directory survived an uninstall is not installed.
+        # Require the Windows uninstall list to still list the app itself.
+        lowered = (name.lower() for name in registry_names)
+        if not any(token in name for token in spec.match for name in lowered):
+            return False
+    return True
 
 
 def _has_text(path: Path, needle: str) -> bool:
@@ -300,8 +311,9 @@ def scan(memory_home: Path, home: Path | None = None, appdata: Path | None = Non
     home = home or Path.home()
     appdata = appdata or Path(os.environ.get("APPDATA") or home / "AppData" / "Roaming")
     items: list[dict[str, Any]] = []
+    names = registry()
     for spec in SPECS:
-        installed = _installed(spec, home, appdata, which)
+        installed = _installed(spec, home, appdata, which, names)
         items.append({
             "key": spec.key, "name": spec.name, "installed": installed,
             "status": _status(spec, home, appdata) if installed else "not_installed",
@@ -312,7 +324,7 @@ def scan(memory_home: Path, home: Path | None = None, appdata: Path | None = Non
     folders: list[str] = []
     for base in (appdata, home / "AppData" / "Local" / "Programs"):
         folders.extend(_app_folders(base))
-    for name in _others(SPECS, [*registry(), *folders]):
+    for name in _others(SPECS, [*names, *folders]):
         generic = AgentSpec("other:" + re.sub(r"\W+", "-", name.lower()), name, ())
         items.append({"key": generic.key, "name": name, "installed": True, "status": "manual",
                       "capture": "relay", "protected": False, "can_connect": False,
