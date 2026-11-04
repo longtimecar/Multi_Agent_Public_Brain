@@ -173,6 +173,11 @@ def record_prompt(svc: MemoryService, session: str, agent: str, text: str) -> bo
     text = clean_turn(text)
     if not text or not session or session == "unknown":
         return False
+    disabled = getattr(svc, "disabled_agents", None)
+    if disabled is not None and agent in disabled():
+        # The owner disconnected this agent: its turns stay out of the store
+        # entirely instead of being hidden later.
+        return False
     now = datetime.now(timezone.utc)
     with file_lock(svc.settings.home / ".state" / "capture.lock"):
         state = _load_state(svc)

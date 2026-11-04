@@ -62,9 +62,9 @@ SPECS: tuple[AgentSpec, ...] = (
               paths=("%APPDATA%/DeepSeek Bot", "%APPDATA%/DeepSeek", "~/.deepseek"),
               config="~/.deepseek/mcp.json"),
     AgentSpec("deepseek-harness", "DeepSeek Harness", ("deepseek harness", "deepseek-harness", "dsh"),
-              paths=("%LOCALAPPDATA%/@deepseek-aidsh-desktop-updater",
-                     "%APPDATA%/DeepSeek Harness", "~/.deepseek-harness"),
-              config="~/.deepseek-harness/mcp.json"),
+              paths=("%APPDATA%/@deepseek-ai", "%LOCALAPPDATA%/@deepseek-aidsh-desktop-updater",
+                     "~/.deepseek-harness"),
+              where="在 DeepSeek Harness 的 设置 → MCP 里新增一个自定义 MCP 服务"),
     AgentSpec("doubao", "Doubao", ("doubao",),
               paths=("%APPDATA%/Doubao", "~/.doubao"),
               config="~/.doubao/mcp.json", needs_uninstaller=True),
@@ -72,7 +72,8 @@ SPECS: tuple[AgentSpec, ...] = (
               paths=("%LOCALAPPDATA%/Qianwen", "%LOCALAPPDATA%/QianwenUpdater", "~/.qwen-agent"),
               where="在千问的 设置 → MCP / 工具 里新增一个自定义 MCP 服务"),
     AgentSpec("vscode", "VS Code (Copilot 等插件)", ("visual studio code", "vscode"), commands=("code",),
-              paths=("%APPDATA%/Code",)),
+              paths=("%APPDATA%/Code",),
+              config="%APPDATA%/Code/User/mcp.json", servers_key="servers"),
 )
 
 # Names worth reporting when found by the scan but not described above.
@@ -288,6 +289,38 @@ def connect(key: str, memory_home: Path, home: Path | None = None, appdata: Path
     temp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(temp, path)
     return {"ok": True, "changed": True, "backup": backup.name if backup else None}
+
+
+def disconnect(key: str, home: Path | None = None, appdata: Path | None = None) -> dict[str, Any]:
+    """Remove membrain from one agent's MCP config when the file is ours to edit.
+
+    Protected configs (Claude Code, Codex) are never edited automatically; the
+    owner removes those entries by hand or through the agent itself. Memory
+    isolation is handled separately by the service and always applies.
+    """
+    home = home or Path.home()
+    appdata = appdata or Path(os.environ.get("APPDATA") or home / "AppData" / "Roaming")
+    spec = _spec(key)
+    if spec.protected:
+        return {"ok": True, "config_removed": False, "manual": True,
+                "note": f"{spec.name} 的配置受保护，请按复制提示词里的位置手动移除 membrain 条目。"}
+    if spec.config is None:
+        return {"ok": True, "config_removed": False, "manual": True,
+                "note": f"{spec.name} 的 MCP 配置在软件界面里，请在 {spec.where} 手动移除。"}
+    path = _resolve(spec.config, home, appdata)
+    if not path.exists():
+        return {"ok": True, "config_removed": False, "manual": False}
+    data = _read_json(path)
+    servers = data.get(spec.servers_key)
+    if not isinstance(servers, dict) or SERVER_NAME not in servers:
+        return {"ok": True, "config_removed": False, "manual": False}
+    backup = path.with_name(f"{path.name}.bak-membrain-{datetime.now():%Y%m%d-%H%M%S}")
+    shutil.copy2(path, backup)
+    servers.pop(SERVER_NAME)
+    temp = path.with_name(path.name + ".membrain-tmp")
+    temp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(temp, path)
+    return {"ok": True, "config_removed": True, "backup": backup.name}
 
 
 def _others(known: Iterable[AgentSpec], names: Iterable[str]) -> list[str]:

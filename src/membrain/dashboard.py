@@ -684,7 +684,8 @@ def make_handler(runtime: DashboardRuntime):
             status = query.get("status", [""])[0]
             fact_type = query.get("type", [""])[0]
             search = query.get("q", [""])[0].strip()
-            facts = service.store.all_facts()
+            disabled = service.disabled_agents()
+            facts = [fact for fact in service.store.all_facts() if fact.source.agent not in disabled]
             if search:
                 direct = [
                     fact for fact in facts
@@ -718,7 +719,8 @@ def make_handler(runtime: DashboardRuntime):
                 limit = max(1, min(100, int(limit_raw)))
             except ValueError:
                 limit = 30
-            episodes = list(runtime.service.store.iter_episodes())
+            episodes = [episode for episode in runtime.service.store.iter_episodes()
+                        if episode.agent not in runtime.service.disabled_agents()]
             episodes.sort(key=lambda episode: (episode.ts, episode.id), reverse=True)
             return {"items": [episode.model_dump(mode="json") for episode in episodes[:limit]],
                     "count": len(episodes)}
@@ -873,7 +875,11 @@ def make_handler(runtime: DashboardRuntime):
                 elif parsed.path == "/api/model":
                     self._json(200, runtime.model_status())
                 elif parsed.path == "/api/agents":
-                    self._json(200, {"agents": agents.scan(runtime.service.settings.home)})
+                    disabled = runtime.service.disabled_agents()
+                    items = agents.scan(runtime.service.settings.home)
+                    for item in items:
+                        item["isolated"] = item.get("key") in disabled
+                    self._json(200, {"agents": items})
                 elif parsed.path == "/api/import/preview":
                     self._json(200, runtime.import_preview())
                 elif parsed.path == "/api/import/sessions/preview":
@@ -987,7 +993,16 @@ def make_handler(runtime: DashboardRuntime):
                     self._json(200, openviking_import.undo_batch(service, str(data.get("batch", ""))))
                 elif path.startswith("/api/agents/") and path.endswith("/connect"):
                     key = unquote(path.removeprefix("/api/agents/").removesuffix("/connect").strip("/"))
-                    self._json(200, agents.connect(key, service.settings.home))
+                    result = agents.connect(key, service.settings.home)
+                    if result.get("ok"):
+                        # A connected agent is trusted again: lift any isolation.
+                        service.enable_agent(key)
+                    self._json(200, result)
+                elif path.startswith("/api/agents/") and path.endswith("/disconnect"):
+                    key = unquote(path.removeprefix("/api/agents/").removesuffix("/disconnect").strip("/"))
+                    result = agents.disconnect(key)
+                    service.disable_agent(key)
+                    self._json(200, result)
                 elif path == "/api/reindex":
                     self._json(200, service.reindex_all())
                 else:

@@ -477,3 +477,53 @@ def test_dashboard_chat_starts_background_extraction(tmp_path, monkeypatch):
     assert started == [1]
     assert [episode.role for episode in service.store.iter_episodes()] == ["user", "assistant"]
     service.index.close()
+
+
+def test_agent_isolation_hides_recall_and_list_until_reconnected(tmp_path):
+    from test_core import make_settings
+
+    service = MemoryService(make_settings(tmp_path))
+
+    def write_from(agent, claim):
+        fact = service.store.draft_fact(
+            type=FactType.PREFERENCE, subject="drink", claim=claim,
+            evidence=[Evidence(episode=f"ep_{agent}_{claim[:6]}", quote=claim,
+                               date=datetime.now(timezone.utc).date(), origin="stated")],
+            source_agent=agent, source_session=f"{agent}-session",
+        )
+        stored = service.store.write_fact(fact)
+        service.retriever.sync_fact(stored)
+        return stored
+
+    cursor_fact = write_from("cursor", "Cursor user drinks tea")
+    claude_fact = write_from("claude-code", "Claude user drinks coffee")
+
+    assert service.disabled_agents() == set()
+    hits = service.retriever.recall("drinks").hits
+    assert {fact.id for fact in hits} >= {cursor_fact.id, claude_fact.id}
+
+    service.disable_agent("cursor")
+    assert service.disabled_agents() == {"cursor"}
+    assert (service.settings.home / "state" / "disabled-agents.json").is_file()
+    assert cursor_fact.id not in {fact.id for fact in service.retriever.recall("drinks").hits}
+    assert claude_fact.id in {fact.id for fact in service.retriever.recall("drinks").hits}
+    # the raw store keeps the data; only recall and listing hide it
+    assert service.store.get_fact(cursor_fact.id).is_live
+
+    service.enable_agent("cursor")
+    assert cursor_fact.id in {fact.id for fact in service.retriever.recall("drinks").hits}
+    service.index.close()
+
+
+def test_disabled_agent_captures_are_refused(tmp_path):
+    from test_core import make_settings
+
+    service = MemoryService(make_settings(tmp_path))
+    service.disable_agent("codex")
+    from membrain.hooks import record_prompt
+    assert record_prompt(service, "codex-session", "codex", "user typed this") is False
+    assert not list(service.store.iter_episodes())
+    service.enable_agent("codex")
+    assert record_prompt(service, "codex-session", "codex", "user typed this") is True
+    assert list(service.store.iter_episodes())
+    service.index.close()

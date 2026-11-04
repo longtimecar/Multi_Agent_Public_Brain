@@ -815,13 +815,21 @@ function renderAgents(items) {
     const capture = agent.capture === 'hooks' ? '自动捕获并注入' : '按需召回；写入靠模型调用记录工具';
     const connect = agent.can_connect && agent.status !== 'connected' && agent.status !== 'unreadable'
       ? `<button class="button button-dark" type="button" data-agent-connect="${escapeHtml(agent.key)}">一键接入</button>` : '';
-    return `<article class="agent-card${agent.installed ? '' : ' is-off'}">
-      <div class="agent-card-head"><strong>${escapeHtml(agent.name)}</strong><span class="agent-chip ${tone}">${label}</span></div>
-      <p class="agent-note">${capture}${agent.protected ? '；配置受保护' : ''}</p>
-      <div class="agent-actions">${connect}<button class="button button-outline" type="button" data-agent-copy="${escapeHtml(agent.key)}">复制提示词</button></div>
+    const connectedLike = agent.status === 'connected' || agent.isolated;
+    const disconnect = connectedLike
+      ? `<button class="button button-outline" type="button" data-agent-disconnect="${escapeHtml(agent.key)}">断开接入</button>` : '';
+    const note = agent.isolated
+      ? '已断开：该 Agent 的记忆已隔离（不删除），重新接入后恢复可见。'
+      : `${capture}${agent.protected ? '；配置受保护' : ''}`;
+    const chip = agent.isolated ? '<span class="agent-chip is-warn">已隔离</span>' : `<span class="agent-chip ${tone}">${label}</span>`;
+    return `<article class="agent-card${agent.installed ? '' : ' is-off'}${agent.isolated ? ' is-isolated' : ''}">
+      <div class="agent-card-head"><strong>${escapeHtml(agent.name)}</strong>${chip}</div>
+      <p class="agent-note">${note}</p>
+      <div class="agent-actions">${connect}${disconnect}<button class="button button-outline" type="button" data-agent-copy="${escapeHtml(agent.key)}">复制提示词</button></div>
     </article>`;
   }).join('');
   $$('[data-agent-connect]').forEach((button) => button.addEventListener('click', () => connectAgent(button.dataset.agentConnect, button)));
+  $$('[data-agent-disconnect]').forEach((button) => button.addEventListener('click', () => disconnectAgent(button.dataset.agentDisconnect, button)));
   $$('[data-agent-copy]').forEach((button) => button.addEventListener('click', () => copyPrompt(button.dataset.agentCopy)));
 }
 
@@ -851,6 +859,24 @@ async function connectAgent(key, button) {
   try {
     const result = await fetchJson(`/api/agents/${encodeURIComponent(key)}/connect`, { method: 'POST', body: '{}' });
     notify(result.changed ? `已接入，原配置已备份为 ${result.backup || '（新建文件）'}。重启该软件后生效` : '已经接入过了');
+    await loadAgents();
+  } catch (error) { notify(error.message, true); button.disabled = false; }
+}
+
+async function disconnectAgent(key, button) {
+  const agent = (state.agents || []).find((item) => item.key === key);
+  const name = agent ? agent.name : key;
+  const confirmed = window.confirm(
+    `断开 ${name} 的接入？\n\n` +
+    '· 该 Agent 产生的记忆会被隔离：不再出现在检索、召回和公共记忆里（数据不删除）。\n' +
+    '· 该 Agent 的新对话不再被捕获。\n' +
+    '· 重新接入后记忆恢复可见。\n\n确定要断开吗？');
+  if (!confirmed) return;
+  button.disabled = true;
+  try {
+    const result = await fetchJson(`/api/agents/${encodeURIComponent(key)}/disconnect`, { method: 'POST', body: '{}' });
+    notify(result.manual ? result.note || '配置需要手动移除；记忆隔离已生效。'
+      : result.config_removed ? `已断开，原配置已备份为 ${result.backup}。重启该软件后生效` : '已断开接入，记忆隔离已生效。');
     await loadAgents();
   } catch (error) { notify(error.message, true); button.disabled = false; }
 }

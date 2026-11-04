@@ -82,6 +82,9 @@ class Retriever:
         self.index = index
         self.embedder = embedder
         self.settings = settings
+        # Agents the owner disconnected from. Their memories stay on disk but
+        # leave every recall path until the agent is connected again.
+        self.disabled_agents: set[str] = set()
 
     # ------------------------------------------------------------ ingestion
 
@@ -144,6 +147,8 @@ class Retriever:
             type_value = type.value if isinstance(type, FactType) else str(type).strip().lower()
         out: list[Fact] = []
         for fact in facts:
+            if fact.source.agent in self.disabled_agents:
+                continue
             if type_value and fact.type.value != type_value:
                 continue
             if scope and not uri_matches_scope(fact.uri or "", scope):

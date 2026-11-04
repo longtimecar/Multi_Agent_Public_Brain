@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Literal
 
 from mcp.server.mcpserver import MCPServer
@@ -24,7 +25,7 @@ from .embeddings import Embedder
 from .index import Index
 from .models import AGENT_WRITABLE_TYPES, Episode, Evidence, FactType, Status
 from .retrieval import Retriever
-from .store import Store, StoreError
+from .store import Store, StoreError, _atomic_write
 from .text import clean_turn
 
 INSTRUCTIONS = """\
@@ -67,6 +68,46 @@ class MemoryService:
         self.embedder = Embedder(self.settings)
         self.retriever = Retriever(self.store, self.index, self.embedder, self.settings)
         self.archive = Archive(self.store, self.index.conn, self.embedder, self.settings)
+        self._disabled_agents = self._load_disabled_agents()
+        self.retriever.disabled_agents = set(self._disabled_agents)
+
+    # ------------------------------------------------------- agent isolation
+    # Disconnecting an agent never deletes data. Its memories stay on disk but
+    # leave every recall path, and new captures from it are refused, until it
+    # is connected again.
+
+    @property
+    def disabled_agents_file(self) -> Path:
+        return self.settings.home / "state" / "disabled-agents.json"
+
+    def _load_disabled_agents(self) -> set[str]:
+        try:
+            data = json.loads(self.disabled_agents_file.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return {str(key) for key in data.get("agents", ()) if isinstance(key, str) and key}
+        except (OSError, ValueError):
+            pass
+        return set()
+
+    def _save_disabled_agents(self) -> None:
+        path = self.disabled_agents_file
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write(path, json.dumps({"agents": sorted(self._disabled_agents)}, ensure_ascii=False, indent=2))
+
+    def disabled_agents(self) -> set[str]:
+        return set(self._disabled_agents)
+
+    def disable_agent(self, key: str) -> set[str]:
+        self._disabled_agents.add(key)
+        self.retriever.disabled_agents = set(self._disabled_agents)
+        self._save_disabled_agents()
+        return set(self._disabled_agents)
+
+    def enable_agent(self, key: str) -> set[str]:
+        self._disabled_agents.discard(key)
+        self.retriever.disabled_agents = set(self._disabled_agents)
+        self._save_disabled_agents()
+        return set(self._disabled_agents)
 
     def ensure_index(self) -> None:
         if self.index.stats()["facts"] == 0 and any(self.store.facts_dir.glob("f_*.md")):
@@ -264,6 +305,8 @@ def build_server(service: MemoryService | None = None) -> MCPServer:
         cleaned = clean_turn(text)
         if not cleaned:
             return {"ok": False, "error": "nothing to record after removing injected or command text"}
+        if agent in svc.disabled_agents():
+            return {"ok": False, "error": "this agent is disconnected; reconnect it to record messages"}
         session = session or f"relay-{agent}"
         now = datetime.now(timezone.utc)
         # A hook-based agent already recorded this turn; reuse it so one message stays one episode.
