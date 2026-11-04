@@ -3,7 +3,9 @@
 Portable, user-owned long-term memory shared across AI agents.
 
 Design and reasoning: [docs/DESIGN.md](docs/DESIGN.md). Status and next tasks:
-[docs/PLAN.md](docs/PLAN.md).
+[docs/PLAN.md](docs/PLAN.md). New here? Start with the
+[onboarding handbook](docs/ONBOARDING.md) — architecture, module map, data flow,
+setup, and maintenance rules in one file.
 
 Your memory lives in **Markdown and JSONL files you own**. The database is a
 disposable index. Any MCP client can read and write it; agents with lifecycle

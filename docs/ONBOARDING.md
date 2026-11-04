@@ -1,0 +1,328 @@
+# membrain 新接手者手册
+
+> 面向第一次接触本仓库的开发者。读完这份文档，你应该能独立搭建环境、理解每个模块的职责、
+> 知道数据怎么流动、以及改动时哪些红线不能碰。
+> 设计动机的完整论述见 [DESIGN.md](DESIGN.md)，当前任务清单见 [PLAN.md](PLAN.md)。
+
+---
+
+## 1. 这个项目是什么
+
+**membrain 是一个可移植、用户自有、跨 Agent 共享的个人长期记忆系统。**
+
+它解决五个真实痛点：各 AI Agent 记忆互不打通、认知碎片化、厂商锁定、手动管理负担、
+记忆无法自我修正。实现方式是一个**本地运行的记忆服务**：
+
+- 任何 Agent（Claude Code、Codex、Cursor、千问……）通过 **MCP 协议**或 **hooks** 读写同一份记忆；
+- 记忆以 **Markdown + JSONL 明文文件**存放在用户自己的磁盘上，数据库只是可重建的索引；
+- 任何写入都必须携带**用户原话作为证据**，模型不能凭空捏造记忆；
+- 生命周期（更正/撤回/冲突）通过**追加式账本（ledger）**管理，原始文件永不改动。
+
+一句话：**记忆是用户的资产，membrain 只是管家。**
+
+---
+
+## 2. 核心设计规则（改动前必读）
+
+以下规则贯穿全部代码，破坏任何一条都等于破坏项目根基：
+
+1. **Append-only**：`facts/<id>.md` 写入后永不原地修改。生命周期变化追加到
+   `ledger.jsonl`，读取时 fold 出当前状态。
+2. **证据优先（No quote, no write）**：每条记忆必须携带用户原话的逐字引用和来源
+   episode。MCP 层和 Dashboard 聊天层都强制校验 `quote` 是用户本轮消息的子串。
+3. **置信度由代码计算**：`confidence.py` 从证据结构（条数、时间跨度、stated/inferred、
+   矛盾状态）推导，**从不信任模型自评**。单条观察封顶 0.40，明确陈述封顶 0.70。
+4. **冲突只呈现、不自动裁决**：检测是机械的（`conflict.py`），裁决只有
+   `membrain resolve`（人类）能做。
+5. **硬约束（constraint）仅限人类操作**：MCP 工具和 Dashboard 聊天的管理员循环都
+   拒绝创建/修改/撤回 constraint。
+6. **敏感记忆默认不可见**：religion/politics/belief 类存储但默认不注入，仅在查询
+   主题明确相关时放开。
+7. **记忆与代码分离**：`MEMBRAIN_HOME`（默认 `<repo>/memory`）是唯一数据位置，
+   重新部署代码不触碰数据。
+
+---
+
+## 3. 技术栈与选型理由
+
+| 层 | 选型 | 为什么 |
+|---|---|---|
+| 语言 | **Python ≥ 3.11** | 生态、原型速度、团队熟悉度；仅用标准库 + 5 个运行时依赖 |
+| Agent 协议 | **MCP（official `mcp` SDK）** | 跨 Agent 事实标准；stdio 传输零网络配置 |
+| 数据校验 | **Pydantic v2** | Fact/Episode 的不可变模型 + 严格 ID/长度校验，防脏数据落盘 |
+| 结构化文件 | **PyYAML** | fact 文件用 YAML front-matter，人类可读可 grep |
+| 数值计算 | **NumPy** | embedding 批量向量、余弦相似度矩阵（健康中心重复检测） |
+| 压缩 | **zstandard** | 仅 DeepSeek Harness 转录解压需要（可选依赖 `dsh` extra） |
+| 全文/向量索引 | **SQLite（WAL）** | 单文件、可删除重建（`.index/memory.db` 是丢弃层）、无服务依赖 |
+| LLM 调用 | **urllib 直连**（OpenAI / Anthropic 两种格式） | 不引入重 SDK；两种协议差异集中在 `llm.py` 一个文件里 |
+| 前端 | **原生 HTML/JS/CSS，无框架** | Dashboard 是本地单页工具，无构建步骤、无 node_modules |
+| 包管理 | **uv + hatchling** | 快、锁定 `uv.lock`、sdist 打包清单严格控制隐私 |
+| 测试 | **pytest** | 212 个用例，全部离线（LLM 用 FakeLLMClient 脚本化） |
+
+**刻意不用的东西**：无 Web 框架（标准库 `http.server` 足够）、无 ORM（文件是事实来源）、
+无前端框架（避免构建链）、无向量数据库（SQLite + NumPy 覆盖当前规模）。
+
+---
+
+## 4. 目录结构导览
+
+```
+membrain-app/
+├── src/membrain/            # 全部核心代码（约 10k 行）
+│   ├── server.py            # MCP 服务：13 个工具（search/write/correct/…）+ MemoryService 装配
+│   ├── dashboard.py         # 本地 Dashboard（http.server）：全部 /api 路由 + 管理员聊天循环
+│   ├── cli.py               # 命令行入口（membrain init/add/search/extract/doctor/…）
+│   ├── store.py             # 事实/episode/ledger 的 append-only 存储与原子写
+│   ├── retrieval.py         # 混合检索（RRF 融合）+ 敏感过滤 + Agent 隔离 + 召回追踪与衰减注入
+│   ├── index.py             # SQLite 索引（FTS + 向量），可随时删除重建
+│   ├── embeddings.py        # OpenAI 兼容 embedding 客户端（批量 + 缓存）
+│   ├── llm.py               # LLM 客户端（complete_text/complete_json），OpenAI/Anthropic 双格式
+│   ├── extract.py           # LLM 记忆提取：从 pending episodes 产出事实草稿
+│   ├── hooks.py             # Claude Code / Codex hooks 的 capture/recall 入口
+│   ├── models.py            # Fact / Episode / Evidence / Provenance（Pydantic）
+│   ├── confidence.py        # 置信度公式（证据结构 → 0~1 分数）
+│   ├── conflict.py          # 规则式冲突检测（否定词/反义词/包含度）
+│   ├── health.py            # 记忆健康扫描：重复/冲突/噪声/遗忘候选
+│   ├── agents.py            # 本机 Agent 扫描、一键接入/断开、隔离清单
+│   ├── session_import.py    # 历史会话导入（LLM 清洗提炼，噪声丢弃）
+│   ├── session_archive.py   # 会话归档与 memory_diff
+│   ├── auto_commit.py       # 空闲时自动归档
+│   ├── budget.py            # token 预算估算（注入量控制）
+│   ├── injection.py         # 注入格式化
+│   ├── context_pack.py      # context 模式的类型配额打包
+│   ├── evolution.py / merge_policy.py / overview.py / peer.py / rerank.py /
+│   │   intent.py / search_mode.py / skills_index.py / resources.py / uri.py
+│   │                        # Scheme A 扩展（可选，默认关）与辅助模块
+│   ├── text.py              # 用户原文清洗（剥掉注入块/系统通知，防污染）
+│   ├── config.py            # 全部环境变量解析（.env 优先级低于真实环境变量）
+│   ├── locking.py           # 跨进程文件锁
+│   └── web/                 # Dashboard 前端三件套（index.html / app.js / styles.css，原生 JS）
+├── tests/                   # pytest 套件（212 用例）+ fixtures/recall_pairs.json（召回黄金样例）
+├── scripts/
+│   ├── hook.py              # hooks 垫片（Agent 配置指向它，它转发给 CLI；相对仓库定位 MEMBRAIN_HOME）
+│   ├── calibrate.py         # 召回质量校准 + 基线对比（--update-baseline / --strict）
+│   ├── build_release.py     # 发布打包 + 隐私扫描
+│   └── install_harness.py   # Cursor/OpenCode/WorkBuddy 的接入安装器
+├── harness/                 # 各 Agent 的接入配置模板
+├── docs/                    # DESIGN / PLAN / TESTING / 本文档
+├── skills/                  # 技能索引数据（Scheme A）
+├── memory/                  # ← 数据目录（gitignore；默认在此，可被 MEMBRAIN_HOME 重定向）
+└── pyproject.toml           # 依赖 + sdist 白名单（防隐私泄漏进发布包）
+```
+
+---
+
+## 5. 架构与运行原理
+
+### 5.1 三层数据模型
+
+| 层 | 位置 | 可丢弃？ | 内容 |
+|---|---|---|---|
+| **Canonical（事实层）** | `memory/facts/*.md`、`memory/episodes/*.jsonl`、`memory/profile.md`、`memory/ledger.jsonl` | **否——这就是产品** | 记忆文件、原始用户回合、生命周期账本 |
+| **Derived（派生层）** | `memory/.index/memory.db`、`memory/archive-index` | **是** | SQLite 全文/向量索引；`membrain reindex` 重建 |
+| **Access（访问层）** | MCP 服务、Dashboard、hooks | 是 | 无状态进程，随起随停 |
+
+删掉整个 `.index/` 目录什么都不会丢——这是"记忆属于用户"的技术保证。
+
+### 5.2 组件与数据流总览
+
+```mermaid
+flowchart LR
+    subgraph Agents["本机 Agent"]
+        CC[Claude Code / Codex<br>hooks 自动捕获]
+        Other[Cursor / 千问 / DeepSeek…<br>MCP relay 模式]
+    end
+    subgraph Service["membrain 服务（本地进程）"]
+        HOOKS[hooks.py<br>捕获入口]
+        MCP[server.py<br>13 个 MCP 工具]
+        EXTRACT[extract.py<br>LLM 提取]
+        STORE[store.py<br>facts / episodes / ledger]
+        RETRIEVE[retrieval.py<br>混合检索 + 衰减注入]
+        INDEX[(index.py<br>SQLite 索引)]
+        HEALTH[health.py<br>健康扫描]
+        DASH[dashboard.py<br>管理员聊天 + /api]
+    end
+    LLM[外部 LLM API<br>提取 / 聊天 / 意图]
+    USER([用户])
+
+    CC -->|prompt/turn| HOOKS
+    Other -->|record_user_message| MCP
+    HOOKS --> STORE
+    HOOKS -->|异步| EXTRACT
+    EXTRACT -->|草稿+证据| STORE
+    EXTRACT <--> LLM
+    STORE <--> INDEX
+    MCP <--> STORE
+    MCP <--> RETRIEVE
+    RETRIEVE <--> INDEX
+    RETRIEVE -->|衰减注入| MCP
+    RETRIEVE -->|衰减注入| DASH
+    USER <-->|浏览器| DASH
+    DASH <--> STORE
+    DASH <--> RETRIEVE
+    DASH -->|管理员动作| STORE
+    HEALTH --> STORE
+    DASH --> HEALTH
+```
+
+### 5.3 关键数据流
+
+**捕获 → 提取（写路径）**
+
+1. 用户在某 Agent 里说话 → hooks（Claude Code/Codex）或 MCP `record_user_message`
+   （relay 型 Agent）把**用户原话**写成 episode（`episodes/YYYY-MM-DD.jsonl`）。
+   注入块（`<system-reminder>`、`<task-notification>` 等）在 `text.py::clean_turn` 被剥掉；
+   被断开（隔离）的 Agent 在入口直接拒绝。
+2. 后台启动 `membrain extract`（子进程，不阻塞 Agent）：LLM 读 pending episodes，
+   产出事实草稿（类型/主题/claim/**逐字引用**）→ `store.write_fact` 重算置信度 → 落盘 + ledger。
+3. 新事实 `sync_fact` 进索引，冲突扫描自动跑。
+
+**召回 → 注入（读路径）**
+
+1. Agent 调 `search_memory` / `find_user_evidence`，或 hooks 的 session-start 注入。
+2. `retrieval.py::recall`：混合检索（向量 + FTS，RRF 融合）→ 过滤
+   （敏感/隔离 Agent/scope/type）→ top_k 选择 → **衰减注入**：30 天内新建或被召回过的
+   记忆给完整表述（含 hedged 证据），超 30 天未召回的只给一句话摘要（`aged` 标记）——
+   这是"逐渐遗忘"策略：证据不删，但不再占用 Agent 的注意力。
+3. 每次召回更新 `memory/.state/recall-tracker.json`（节流写盘）。
+
+**生命周期（改路径）**
+
+- 更正 = 写新事实（`supersedes` 指向旧条）+ ledger `supersede`；撤回 = ledger `retract`；
+  冲突 = `contest`，解决 = `resolve(keep, drop)`。原始文件永远完整。
+- 入口有三处，校验规则一致：MCP 工具、Dashboard L2 详情按钮、Dashboard 聊天管理员循环
+  （JSON 动作协议，最多 5 轮，`record` 的 quote 必须是用户原话子串）。
+
+**Agent 接入与隔离**
+
+- `agents.py::scan` 实时扫描（清单 + 关键词兜底 + Windows 卸载列表）；
+- 一键接入 = 直接编辑该 Agent 的 MCP 配置文件（先备份）；Claude Code/Codex 受保护，只给提示词；
+- 断开 = 移除配置（能改的）+ 把 key 写进 `memory/state/disabled-agents.json`：
+  其历史记忆从所有召回/列表中隐藏（**不删除**），新捕获被拒绝，重新接入自动解除。
+
+**导入与健康**
+
+- 历史会话导入（`session_import.py`）：发现本机会话 → LLM 清洗分类/生成 L0 摘要 →
+  噪声丢弃 → 按来源进资料库；可选"同时提炼为短记忆"（默认关）。
+- 健康中心（`health.py`）：重复（embedding 余弦 ≥ 0.88）/冲突/噪声/遗忘候选四类检测 →
+  健康分 → 用户逐项决定（合并替代/撤回/忽略）。
+
+---
+
+## 6. 本地环境搭建与运行
+
+前置：Python ≥ 3.11、[uv](https://docs.astral.sh/uv/)、Git。Windows/Linux/macOS 均可。
+
+```bash
+# 1. 拉代码
+git clone https://github.com/longtimecar/Multi_Agent_Public_Brain.git membrain
+cd membrain
+
+# 2. 安装依赖（自动创建 .venv）
+uv sync
+
+# 3. 初始化空记忆库（在你自己的仓库目录下创建 memory/）
+uv run membrain init
+
+# 4. 配置模型（文件被 gitignore，密钥不会离开本机）
+cp .env.example .env
+# 编辑 .env，至少填 LLM 三项；embedding 可选（缺省时检索退化为全文匹配）：
+#   MEMBRAIN_LLM_BASE_URL / MEMBRAIN_LLM_API_KEY / MEMBRAIN_LLM_MODEL
+#   MEMBRAIN_EMBED_BASE_URL / MEMBRAIN_EMBED_API_KEY / MEMBRAIN_EMBED_MODEL
+# 换 embedding 模型后记得：uv run membrain reindex
+
+# 5. 启动 Dashboard（浏览器自动打开）
+uv run membrain dashboard --port 1971
+
+# 6. 验证
+uv run membrain stats        # 报告配置来源与统计，不打印任何密钥
+uv run membrain doctor       # 体检：配置/索引/hooks 一并检查
+```
+
+**接入你的 Agent**：Dashboard →「Agent 接入」→ 已安装的 Agent 一键接入（自动备份原配置），
+或「复制提示词」交给 Agent 自己配置。接入后重启该 Agent 生效。
+
+**常用运维**：
+
+```bash
+uv run membrain extract            # 手动提取 pending 回合
+uv run membrain reindex            # 重建全部索引（安全）
+uv run python scripts/calibrate.py --strict --update-baseline
+                                   # 召回质量回归 + 更新基线（需 embedding）
+```
+
+---
+
+## 7. 测试与质量保障
+
+```bash
+uv run pytest -q                   # 212 个离线用例（无网络、LLM 用 Fake 脚本化）
+uv run python scripts/calibrate.py # 召回质量回归（82 组中英文黄金样例 + 硬负例）
+```
+
+- **召回回归基线**：结果对比 `state/recall-baseline.json`——通过率降 2%+、漏召回增加、
+  样例持续失败都会以非零退出并打印 REGRESSIONS。换 embedding 模型后务必跑一次
+  并 `--update-baseline`。
+- **已知抖动**：`test_dashboard_rejects_cross_site_memory_writes` 在低负载机上偶发
+  （HTTP 线程时序），单跑必过；重跑即可，不要因此改动业务代码。
+
+---
+
+## 8. 配置参考（环境变量）
+
+全部通过 `.env`（仓库根，gitignore）或真实环境变量设置；后者优先。完整清单见
+`.env.example`，常用的：
+
+| 变量 | 作用 | 默认 |
+|---|---|---|
+| `MEMBRAIN_HOME` | 记忆库根目录 | `<repo>/memory` |
+| `MEMBRAIN_ENV_FILE` | 指向别的 .env | `<repo>/.env` |
+| `MEMBRAIN_LLM_BASE_URL/_API_KEY/_MODEL/_API_FORMAT/_TIMEOUT` | 提取/聊天用的模型 | 无（未配置则聊天/提取不可用，其余功能正常） |
+| `MEMBRAIN_EMBED_BASE_URL/_API_KEY/_MODEL/_TIMEOUT` | 语义检索 embedding | 无（退化为全文检索） |
+| `MEMBRAIN_SEMANTIC_FLOOR` | 语义相似度下限 | 0.41（用 `scripts/calibrate.py` 校准） |
+| `MEMBRAIN_TURN_TOKEN_BUDGET` / `_SESSION_TOKEN_BUDGET` | 单次/会话注入预算 | 1200 / 2500 |
+| `MEMBRAIN_OPENVIKING_ROOT` | 可选的 OpenViking 历史数据源 | 无（不设置绝不扫描） |
+| `MEMBRAIN_USE_INTENT` / `MEMBRAIN_USE_RERANK` | Scheme A 实验特性 | 关 |
+
+---
+
+## 9. 升级方向与注意事项
+
+### 9.1 路线图（按 PLAN.md 与当前进度）
+
+| 方向 | 状态 | 说明 |
+|---|---|---|
+| 记忆健康中心 | ✅ 已实现 | `health.py` 四类扫描；可扩展"合并为一条"的 LLM 辅助起草 |
+| 召回质量回归 | ✅ 已实现 | 82 组样例 + 基线对比；样例可持续扩充 |
+| Agent 断开/隔离 | ✅ 已实现 | 资料库（archive）的来源过滤尚未覆盖，为已知缺口 |
+| 统一画像生成 | ⬜ 下一步 | 从 active 记忆生成带证据编号的 profile 摘要（`profile.md` 已有挂载点） |
+| 备份/恢复命令 | ⬜ | `membrain backup/restore/verify`：打包 + ledger 校验 + 索引重建 |
+| 外置 agents.json | ⬜ | Agent 识别清单外置成数据文件，社区可贡献 |
+
+### 9.2 改动红线（违反即破坏核心价值）
+
+1. **不要原地修改 fact 文件的 claim/evidence**——一切变化走 ledger。衰减机制也刻意
+   做在注入层而不是删证据。
+2. **不要绕过证据校验**——任何新的写入口都必须校验 quote 是用户原话子串；
+   constraint 永远不给模型写。
+3. **不要把绝对路径/个人信息写进 src**——所有路径从 `Settings` 来；
+   提交前跑 `scripts/build_release.py` 的隐私扫描或等价 grep。
+4. **不要在 recall 热路径里做同步 LLM 调用**——intent/rerank 都是 fail-open 且可关；
+   提取永远走后台子进程。
+5. **`web/` 保持无构建依赖**——引入前端框架前先论证为什么原生 JS 不够。
+6. **sdist 白名单**（pyproject `[tool.hatch.build.targets.sdist]`）——新增顶层目录时
+   记得同步，防止本机数据被打进发布包。
+
+### 9.3 排查速查
+
+| 症状 | 先看 |
+|---|---|
+| Agent 没有记忆注入 | `membrain doctor`；Agent 配置里的 `MEMBRAIN_HOME` 是否一致 |
+| 记忆"消失"了 | 是否断开了来源 Agent（隔离）；健康中心是否建议撤回；`fact_is_stale` 只是摘要化，数据仍在 |
+| Dashboard 聊天不动 | `.env` 的 LLM 配置；模型连接页"测试模型连接"；`memory/.state/extract.log` |
+| 提取没产出 | `membrain extract --session <id>` 手动跑；检查 LLM 返回是否合法 JSON |
+| 检索不准 | `scripts/calibrate.py` 跑基线对比；确认 embedding 配置后已 `reindex` |
+
+---
+
+*文档对应代码版本 `ba84a10`（2026-11-04）。发现文档与代码不符时，以代码为准并欢迎修文档。*

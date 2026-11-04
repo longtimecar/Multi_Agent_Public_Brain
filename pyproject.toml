@@ -40,6 +40,7 @@ include = [
     "/docs/DESIGN.md",
     "/docs/PLAN.md",
     "/docs/TESTING.md",
+    "/docs/ONBOARDING.md",
     "/docs/OPEN_SOURCE_MEMORY_RESEARCH.md",
     "/README.md",
     "/AGENTS.md",
