@@ -222,132 +222,62 @@ function memoryGroups() {
   return groups;
 }
 
-function memoryMode() {
-  if (state.filters.q) return 'search';
-  if (state.tree.subject) return 'entries';
-  if (state.tree.type) return 'subjects';
-  return 'types';
-}
-
 function memoryStatusLabel() {
   return { active: '当前有效', contested: '待处理冲突', superseded: '已替代', retracted: '已撤回' }[state.filters.status] || '状态筛选';
 }
 
-function memoryPath(mode) {
-  const root = $('#memory-breadcrumb');
-  const back = $('#memory-back');
-  if (!root) return;
-  const typeLabel = labels.type[state.tree.type] || state.tree.type;
-  let html = '<button class="memory-crumb" type="button" data-memory-root>全部记忆</button>';
-  if (mode === 'search') {
-    html += `<span class="memory-crumb-sep">/</span><span class="memory-crumb is-current">搜索结果</span>`;
-  } else {
-    if (state.filters.status) {
-      html += `<span class="memory-crumb-sep">/</span>`;
-      html += state.tree.type
-        ? `<button class="memory-crumb" type="button" data-memory-status>${escapeHtml(memoryStatusLabel())}</button>`
-        : `<span class="memory-crumb is-current">${escapeHtml(memoryStatusLabel())}</span>`;
-    }
-    if (mode === 'subjects' || mode === 'entries') {
-      html += `<span class="memory-crumb-sep">/</span>`;
-      html += mode === 'entries'
-        ? `<button class="memory-crumb" type="button" data-memory-type="${escapeHtml(state.tree.type)}">${escapeHtml(typeLabel)}</button><span class="memory-crumb-sep">/</span><span class="memory-crumb is-current">${escapeHtml(state.tree.subject)}</span>`
-        : `<span class="memory-crumb is-current">${escapeHtml(typeLabel)}</span>`;
-    }
-  }
-  root.innerHTML = html;
-  if (back) {
-    const atTop = mode === 'types' && !state.filters.status;
-    back.disabled = atTop;
-    back.title = atTop ? '已经在最上层' : '返回上一级';
-  }
-}
-
-function folderCard(attrs, level, title, count, meta, preview) {
-  return `<button class="memory-folder" type="button" ${attrs}>
-    <span class="memory-folder-top"><span class="memory-folder-level">${level}</span><span class="memory-folder-count">${count} 条</span></span>
-    <strong>${escapeHtml(title)}</strong>
-    <span class="memory-folder-meta">${escapeHtml(meta)}</span>
-    <span class="memory-folder-preview">${escapeHtml(preview)}</span>
-    <span class="memory-folder-open">打开文件夹 <span aria-hidden="true">→</span></span>
-  </button>`;
-}
-
-function renderFolderView(mode) {
-  const root = $('#memory-folder-view');
-  if (!root) return;
-  const groups = memoryGroups();
-  if (!state.facts.length) {
-    root.innerHTML = '<div class="empty-state"><div class="empty-mark">M</div><h3>还没有记忆</h3><p>接入 Agent 并开始对话后，记忆会按分类出现在这里。</p></div>';
-    return;
-  }
-  if (mode === 'types') {
-    const types = [...groups.keys()].sort((a, b) => (labels.type[a] || a).localeCompare(labels.type[b] || b, 'zh'));
-    root.innerHTML = `<div class="memory-folder-head"><div><span class="memory-folder-level">L1 分类</span><h3>选择一个分类文件夹</h3><p>里面再按主题分层；进入主题后查看 L0 摘要。</p></div><span class="memory-folder-total">${state.factTotal ?? state.facts.length} 条记忆</span></div>
-      <div class="memory-folder-grid">${types.map((type) => {
-        const subs = groups.get(type);
-        const count = [...subs.values()].reduce((sum, n) => sum + n, 0);
-        const subjects = [...subs.keys()].sort((a, b) => a.localeCompare(b, 'zh'));
-        return folderCard(`data-folder-type="${escapeHtml(type)}"`, 'L1 分类', labels.type[type] || type, count,
-          `${subs.size} 个主题`, subjects.slice(0, 3).join(' · ') || '暂无主题');
-      }).join('')}</div>`;
-    return;
-  }
-  const subs = groups.get(state.tree.type) || new Map();
-  const subjects = [...subs.keys()].sort((a, b) => a.localeCompare(b, 'zh'));
-  const total = [...subs.values()].reduce((sum, n) => sum + n, 0);
-  root.innerHTML = `<div class="memory-folder-head"><div><span class="memory-folder-level">L1 主题</span><h3>${escapeHtml(labels.type[state.tree.type] || state.tree.type)}</h3><p>再选一个主题，查看它下面的 L0 摘要。</p></div><span class="memory-folder-total">${subs.size} 个主题 · ${total} 条</span></div>
-    <div class="memory-subject-grid">${subjects.map((subject) => `
-      <button class="memory-subject-folder" type="button" data-folder-subject="${escapeHtml(subject)}">
-        <span class="memory-subject-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 7.5A2 2 0 0 1 5.5 5.5h4l2 2h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-9Z"/></svg></span>
-        <span class="memory-subject-copy"><strong>${escapeHtml(subject)}</strong><small>进入查看 ${subs.get(subject)} 条 L0 摘要</small></span>
-        <span class="memory-subject-count">${subs.get(subject)}</span>
-        <span class="memory-subject-arrow" aria-hidden="true">→</span>
-      </button>`).join('')}</div>`;
+function treeOpenSet() {
+  if (!(state.treeOpen instanceof Set)) state.treeOpen = new Set();
+  return state.treeOpen;
 }
 
 function renderFacts() {
-  const list = $('#memory-list');
-  const folderView = $('#memory-folder-view');
-  const tableHead = $('#memory-table-head');
-  const mode = memoryMode();
-  memoryPath(mode);
-  if (mode === 'types' || mode === 'subjects') {
-    list.classList.add('is-hidden');
-    tableHead?.classList.add('is-hidden');
-    folderView?.classList.remove('is-hidden');
-    $('#memory-count').textContent = mode === 'types'
-      ? (state.factTotal ?? state.facts.length)
-      : [...(memoryGroups().get(state.tree.type) || new Map()).values()].reduce((sum, n) => sum + n, 0);
-    renderFolderView(mode);
+  const tree = $('#obsidian-tree');
+  if (!tree) return;
+  const groups = memoryGroups();
+  $('#memory-count').textContent = state.factTotal ?? state.facts.length;
+  if (!state.facts.length) {
+    tree.innerHTML = '<div class="side-empty">还没有记忆。接入 Agent 并开始对话后，记忆会出现在这里。</div>';
     return;
   }
-  folderView?.classList.add('is-hidden');
-  list.classList.remove('is-hidden');
-  tableHead?.classList.remove('is-hidden');
-  const rows = state.facts.filter((fact) => (!state.tree.type || fact.type === state.tree.type) && (!state.tree.subject || fact.subject === state.tree.subject));
-  $('#memory-count').textContent = state.filters.q || state.filters.status ? rows.length : (state.tree.subject ? rows.length : (state.factTotal ?? rows.length));
-  const selectedIndex = state.selected ? rows.findIndex((fact) => fact.id === state.selected.id) : -1;
-  if (selectedIndex >= state.memoryLimit) state.memoryLimit = Math.ceil((selectedIndex + 1) / 8) * 8;
-  const visible = rows.slice(0, state.memoryLimit);
-  list.innerHTML = rows.length ? visible.map((fact) => `
-    <button class="memory-row${state.selected?.id === fact.id ? ' is-selected' : ''}" type="button" data-fact-id="${escapeHtml(fact.id)}">
-      <div class="memory-main"><div class="memory-line">${typeTag(fact.type)}<span class="memory-claim" title="${escapeHtml(fact.claim)}">${escapeHtml(fact.abstract || fact.claim)}</span></div><div class="memory-subject">${escapeHtml(fact.subject)} · ${formatDate(fact.valid_from)}</div></div>
-      <div>${statusBadge(fact.status)}</div>
-      <div class="evidence-count">${fact.evidence?.length ?? 0}</div>
-    </button>`).join('') : '<div class="empty-state"><div class="empty-mark">M</div><h3>还没有匹配的记忆</h3><p>换个文件夹或关键词，或等待 Agent 捕获新的用户信息。</p></div>';
-  if (rows.length > visible.length) {
-    list.insertAdjacentHTML('beforeend', `
-      <div class="memory-more">
-        <span>已显示 ${visible.length} / ${rows.length}</span>
-        <button class="button button-outline" type="button" id="memory-more-button">再显示 ${Math.min(8, rows.length - visible.length)} 条</button>
-      </div>`);
-    $('#memory-more-button')?.addEventListener('click', () => {
-      state.memoryLimit += 8;
-      renderFacts();
-    });
-  }
-  $$('.memory-row').forEach((row) => row.addEventListener('click', () => selectFact(row.dataset.factId)));
+  const open = treeOpenSet();
+  const expandAll = Boolean(state.filters.q) || Boolean(state.filters.status);
+  const types = [...groups.keys()].sort((a, b) => (labels.type[a] || a).localeCompare(labels.type[b] || b, 'zh'));
+  tree.innerHTML = types.map((type) => {
+    const subs = groups.get(type);
+    const total = [...subs.values()].reduce((sum, n) => sum + n, 0);
+    const typeKey = `t:${type}`;
+    const typeOpen = expandAll || open.has(typeKey);
+    const subjectHtml = typeOpen ? [...subs.keys()].sort((a, b) => a.localeCompare(b, 'zh')).map((subject) => {
+      const subjectKey = `s:${type}:${subject}`;
+      const subjectOpen = expandAll || open.has(subjectKey);
+      const facts = state.facts.filter((fact) => fact.type === type && fact.subject === subject);
+      const leaves = subjectOpen ? facts.map((fact) => `
+        <button class="obsidian-leaf${state.selected?.id === fact.id ? ' is-selected' : ''}" type="button" data-fact-id="${escapeHtml(fact.id)}">
+          <span class="obsidian-leaf-title">${escapeHtml(fact.abstract || fact.claim)}</span>
+          <span class="obsidian-leaf-dot obsidian-dot-${escapeHtml(fact.status)}" title="${escapeHtml(fact.status)}"></span>
+        </button>`).join('') : '';
+      return `<div class="obsidian-branch">
+        <button class="obsidian-folder obsidian-folder-sub" type="button" data-toggle="${escapeHtml(subjectKey)}">
+          <span class="obsidian-caret" aria-hidden="true">${subjectOpen ? '▾' : '▸'}</span>
+          <span class="obsidian-folder-name">${escapeHtml(subject)}</span>
+          <span class="obsidian-count">${facts.length}</span>
+        </button>${leaves}</div>`;
+    }).join('') : '';
+    return `<div class="obsidian-branch">
+      <button class="obsidian-folder obsidian-folder-type" type="button" data-toggle="${escapeHtml(typeKey)}">
+        <span class="obsidian-caret" aria-hidden="true">${typeOpen ? '▾' : '▸'}</span>
+        <span class="obsidian-folder-name">${escapeHtml(labels.type[type] || type)}</span>
+        <span class="obsidian-count">${total}</span>
+      </button>${subjectHtml}</div>`;
+  }).join('');
+  tree.querySelectorAll('[data-toggle]').forEach((button) => button.addEventListener('click', () => {
+    const key = button.dataset.toggle;
+    const bag = treeOpenSet();
+    if (bag.has(key)) bag.delete(key); else bag.add(key);
+    renderFacts();
+  }));
+  tree.querySelectorAll('[data-fact-id]').forEach((row) => row.addEventListener('click', () => selectFact(row.dataset.factId)));
 }
 
 function resetMemoryLimit() {
@@ -363,28 +293,7 @@ function clearMemoryFilters() {
 }
 
 function memoryGoBack() {
-  if (state.filters.q) {
-    state.filters.q = '';
-    $('#search-input').value = '';
-    resetMemoryLimit();
-    loadData();
-    return;
-  }
-  if (state.tree.subject) {
-    state.tree.subject = '';
-  } else if (state.tree.type) {
-    state.tree = { type: '', subject: '' };
-  } else if (state.filters.status) {
-    state.filters.status = '';
-    $('#status-filter').value = '';
-    resetMemoryLimit();
-    loadData();
-    return;
-  }
-  resetMemoryLimit();
-  state.selected = null;
-  renderFacts();
-  renderDetail(null);
+  // Tree navigation replaces folder drilling; kept as a no-op for legacy callers.
 }
 
 function isTechnicalEpisode(episode) {
@@ -454,35 +363,36 @@ function renderEpisodes() {
 }
 
 function renderDetail(fact) {
-  const content = $('#detail-content');
-  const panel = $('#detail-panel');
-  const grid = $('#memories');
+  const main = $('#obsidian-main');
+  const meta = $('#obsidian-meta');
+  if (!main || !meta) return;
   if (!fact) {
-    panel?.classList.add('is-hidden');
-    grid?.classList.remove('has-detail');
-    $('#detail-empty').classList.remove('is-hidden');
-    content.classList.add('is-hidden');
+    main.innerHTML = '<div class="detail-empty"><div class="detail-empty-mark">L2</div><h2>选择一条记忆</h2><p>左栏点条目，这里显示正文与原文证据。</p></div>';
+    meta.innerHTML = '';
     return;
   }
-  panel?.classList.remove('is-hidden');
-  grid?.classList.add('has-detail');
-  $('#detail-empty').classList.add('is-hidden');
-  content.classList.remove('is-hidden');
   const confidence = Math.round((fact.confidence || 0) * 100);
   const evidence = (fact.evidence || []).map((item) => `<div class="evidence-item"><p class="evidence-quote">“${escapeHtml(item.quote)}”</p><span class="evidence-meta">${escapeHtml(item.episode)} · ${formatDate(item.date)} · ${escapeHtml(item.origin)}</span></div>`).join('');
   const canAct = fact.status !== 'retracted' && fact.status !== 'superseded';
-  content.innerHTML = `
-    <div class="detail-top"><div><div class="memory-line"><span class="memory-folder-level">L2 详情</span>${typeTag(fact.type)}${statusBadge(fact.status)}</div><h2 class="detail-title">${escapeHtml(fact.claim)}</h2><p class="detail-id">${escapeHtml(fact.id)}</p></div><button class="icon-button detail-close" id="detail-close" type="button" title="关闭详情" aria-label="关闭详情"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
-    <div class="detail-actions">${canAct ? `<button class="button button-outline" data-action="correct">${icon('edit')}纠正</button><button class="button button-outline" data-action="contest">${icon('flag')}标记冲突</button><button class="button button-danger" data-action="retract">${icon('undo')}撤回</button>${fact.status === 'contested' ? `<button class="button button-outline" data-action="resolve">解决冲突</button>` : ''}` : '<span class="panel-meta">此记忆已结束当前生命周期</span>'}</div>
+  main.innerHTML = `
+    <div class="detail-top"><div><div class="memory-line"><span class="memory-folder-level">L2 正文</span>${typeTag(fact.type)}${statusBadge(fact.status)}</div><h2 class="detail-title">${escapeHtml(fact.claim)}</h2></div></div>
+    <div class="detail-section"><div class="detail-section-label">原文证据 · ${fact.evidence?.length ?? 0}</div>${evidence || '<p class="panel-subtitle">没有证据。</p>'}</div>`;
+  meta.innerHTML = `
+    <div class="detail-section"><div class="detail-section-label">基础信息</div>
+      <div class="detail-meta">
+        <div><span class="meta-label">类型</span><span class="meta-value">${escapeHtml(labels.type[fact.type] || fact.type)}</span></div>
+        <div><span class="meta-label">主题</span><span class="meta-value">${escapeHtml(fact.subject || '—')}</span></div>
+        <div><span class="meta-label">状态</span><span class="meta-value">${statusBadge(fact.status)}</span></div>
+        <div><span class="meta-label">来源 Agent</span><span class="meta-value">${escapeHtml(displaySource(fact.source?.agent || 'unknown'))}</span></div>
+        <div><span class="meta-label">会话</span><span class="meta-value">${escapeHtml(fact.source?.session || '—')}</span></div>
+        <div><span class="meta-label">首次记录</span><span class="meta-value">${formatDate(fact.created_at)}</span></div>
+        <div><span class="meta-label">有效起点</span><span class="meta-value">${formatDate(fact.valid_from)}</span></div>
+        <div><span class="meta-label">记忆 ID</span><span class="meta-value">${escapeHtml(fact.id)}</span></div>
+      </div>
+    </div>
     <div class="detail-section"><div class="detail-section-label">Confidence</div><div class="confidence-row"><div class="confidence-track"><div class="confidence-fill ${widthBucket(confidence)}"></div></div><span class="confidence-value">${confidence}%</span></div></div>
-    <div class="detail-section"><div class="detail-section-label">原文证据 · ${fact.evidence?.length ?? 0}</div>${evidence || '<p class="panel-subtitle">没有证据。</p>'}</div>
-    <div class="detail-section"><div class="detail-meta"><div><span class="meta-label">来源 Agent</span><span class="meta-value">${escapeHtml(displaySource(fact.source?.agent || 'unknown'))}</span></div><div><span class="meta-label">会话</span><span class="meta-value">${escapeHtml(fact.source?.session || '—')}</span></div><div><span class="meta-label">首次记录</span><span class="meta-value">${formatDate(fact.created_at)}</span></div><div><span class="meta-label">有效起点</span><span class="meta-value">${formatDate(fact.valid_from)}</span></div></div></div>`;
-  content.querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => openAction(button.dataset.action, fact)));
-  content.querySelector('#detail-close')?.addEventListener('click', () => {
-    state.selected = null;
-    renderFacts();
-    renderDetail(null);
-  });
+    <div class="detail-actions">${canAct ? `<button class="button button-outline" data-action="correct">${icon('edit')}纠正</button><button class="button button-outline" data-action="contest">${icon('flag')}标记冲突</button><button class="button button-danger" data-action="retract">${icon('undo')}撤回</button>${fact.status === 'contested' ? `<button class="button button-outline" data-action="resolve">解决冲突</button>` : ''}` : '<span class="panel-meta">此记忆已结束当前生命周期</span>'}</div>`;
+  meta.querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => openAction(button.dataset.action, fact)));
 }
 
 async function loadData() {
@@ -592,6 +502,54 @@ async function restoreChat() {
   } catch (error) {
     localStorage.removeItem('membrain.activeChat');
     localStorage.removeItem('membrain.lastMemory');
+  }
+}
+
+function toggleChatHistory() {
+  const panel = $('#chat-history-panel');
+  if (!panel) return;
+  const opening = panel.classList.contains('is-hidden');
+  panel.classList.toggle('is-hidden', !opening);
+  if (opening) loadChatHistory();
+}
+
+async function loadChatHistory() {
+  const list = $('#chat-history-list');
+  if (!list) return;
+  list.innerHTML = '<div class="side-empty">正在加载…</div>';
+  try {
+    const data = await fetchJson('/api/chat-sessions');
+    const sessions = data.sessions || [];
+    $('#chat-history-count').textContent = `${sessions.length} 个会话`;
+    if (!sessions.length) {
+      list.innerHTML = '<div class="side-empty">还没有历史会话。</div>';
+      return;
+    }
+    list.innerHTML = sessions.map((row) => `
+      <button class="chat-history-item${row.session_id === state.chat.sessionId ? ' is-current' : ''}" type="button" data-session-id="${escapeHtml(row.session_id)}">
+        <span class="chat-history-title">${escapeHtml(row.title || '（无标题会话）')}</span>
+        <span class="chat-history-meta">${escapeHtml(formatTime(row.last_ts))} · ${row.turns} 条</span>
+      </button>`).join('');
+    list.querySelectorAll('[data-session-id]').forEach((el) => {
+      el.addEventListener('click', () => openChatSession(el.dataset.sessionId));
+    });
+  } catch (error) {
+    list.innerHTML = `<div class="side-empty">加载失败：${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function openChatSession(sessionId) {
+  try {
+    const saved = await fetchJson(`/api/chat/${encodeURIComponent(sessionId)}`);
+    state.chat.sessionId = saved.session_id;
+    state.chat.messages = saved.messages || [];
+    state.chat.memory = [];
+    localStorage.setItem('membrain.activeChat', sessionId);
+    renderChat();
+    renderMemorySources();
+    $('#chat-history-panel')?.classList.add('is-hidden');
+  } catch (error) {
+    notify(error.message, true);
   }
 }
 
@@ -760,7 +718,7 @@ async function selectFact(id) {
     state.selected = await fetchJson(`/api/facts/${encodeURIComponent(id)}`);
     renderFacts(); renderDetail(state.selected);
     if (window.matchMedia('(max-width: 1120px)').matches) {
-      $('#detail-panel')?.scrollIntoView({ block: 'start' });
+      $('#obsidian-main')?.scrollIntoView({ block: 'start' });
     }
   } catch (error) { notify(error.message, true); }
 }
@@ -872,7 +830,7 @@ function renderAgents(items) {
     ? `<div class="agent-grid-note">已隐藏 ${hidden} 个未安装的 Agent。</div>` : '';
   grid.innerHTML = headNote + visible.map((agent) => {
     const [label, tone] = agentStatus[agent.status] || [agent.status, ''];
-    const capture = agent.capture === 'hooks' ? '自动捕获并注入' : '按需召回；写入靠模型调用记录工具';
+    const capture = agent.capture === 'hooks' ? '自动捕获并注入' : '自动捕获（后台监听会话日志）；按需召回';
     const connect = agent.can_connect && agent.status !== 'connected' && agent.status !== 'unreadable'
       ? `<button class="button button-dark" type="button" data-agent-connect="${escapeHtml(agent.key)}">一键接入</button>` : '';
     const connectedLike = agent.status === 'connected' || agent.isolated;
@@ -882,8 +840,9 @@ function renderAgents(items) {
       ? '已断开：该 Agent 的记忆已隔离（不删除），重新接入后恢复可见。'
       : `${capture}${agent.protected ? '；配置受保护' : ''}`;
     const chip = agent.isolated ? '<span class="agent-chip is-warn">已隔离</span>' : `<span class="agent-chip ${tone}">${label}</span>`;
+    const running = agent.running ? '<span class="agent-chip is-ok">运行中</span>' : '';
     return `<article class="agent-card${agent.installed ? '' : ' is-off'}${agent.isolated ? ' is-isolated' : ''}">
-      <div class="agent-card-head"><strong>${escapeHtml(agent.name)}</strong>${chip}</div>
+      <div class="agent-card-head"><strong>${escapeHtml(agent.name)}</strong>${running}${chip}</div>
       <p class="agent-note">${note}</p>
       <div class="agent-actions">${connect}${disconnect}<button class="button button-outline" type="button" data-agent-copy="${escapeHtml(agent.key)}">复制提示词</button></div>
     </article>`;
@@ -900,6 +859,16 @@ async function loadAgents() {
     notify(error.message, true);
   }
 }
+
+// Auto-rescan so install/uninstall shows up without clicking 重新扫描.
+setInterval(() => {
+  const panel = document.querySelector('[data-view-panel="agents"]');
+  if (panel && panel.classList.contains('is-active')) loadAgents();
+}, 45000);
+window.addEventListener('focus', () => {
+  const panel = document.querySelector('[data-view-panel="agents"]');
+  if (panel && panel.classList.contains('is-active')) loadAgents();
+});
 
 const HEALTH_KINDS = {
   duplicate: ['疑似重复', 'is-warn'], conflict: ['待裁决冲突', 'is-warn'],
@@ -1259,6 +1228,134 @@ async function selectLibraryEntry(id, offset = 0) {
   } catch (error) { notify(error.message, true); }
 }
 
+/* ---- RAG knowledge library (uploaded documents) ---- */
+state.ragDocs = [];
+state.ragSelected = null;
+
+async function loadRag() {
+  try {
+    const data = await fetchJson('/api/rag/documents');
+    state.ragDocs = data.documents || [];
+    renderRagList();
+  } catch (error) {
+    const list = $('#rag-list');
+    if (list) list.innerHTML = `<div class="side-empty">加载失败：${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function renderRagList(items) {
+  const list = $('#rag-list');
+  if (!list) return;
+  const rows = items || state.ragDocs || [];
+  $('#rag-count').textContent = rows.length;
+  if (!rows.length) {
+    list.innerHTML = '<div class="side-empty">还没有文档。把文件拖进上方区域试试。</div>';
+    return;
+  }
+  list.innerHTML = rows.map((doc) => `
+    <button class="rag-item${state.ragSelected === doc.id ? ' is-selected' : ''}" type="button" data-rag-id="${escapeHtml(doc.id)}">
+      <span class="rag-item-title">${escapeHtml(doc.title)}</span>
+      <span class="rag-item-meta">${escapeHtml(doc.category)} · ${doc.chunks} 段</span>
+    </button>`).join('');
+  list.querySelectorAll('[data-rag-id]').forEach((el) => el.addEventListener('click', () => openRagDoc(el.dataset.ragId)));
+}
+
+async function openRagDoc(id) {
+  try {
+    const doc = await fetchJson(`/api/rag/doc/${encodeURIComponent(id)}`);
+    state.ragSelected = id;
+    renderRagList();
+    const detail = $('#rag-detail');
+    if (!detail) return;
+    detail.classList.remove('is-hidden');
+    detail.innerHTML = `
+      <div class="detail-top"><div><h2 class="detail-title">${escapeHtml(doc.title)}</h2>
+      <p class="detail-id">${escapeHtml(doc.uri || doc.id)} · ${escapeHtml(doc.category)}</p></div>
+      <button class="button button-danger" id="rag-delete-button">删除</button></div>
+      <div class="detail-section"><div class="detail-section-label">分块 · ${doc.chunks}</div>
+        ${(doc.chunk_list || []).map((c) => `<div class="rag-chunk"><span class="rag-chunk-seq">#${c.seq + 1}</span><p>${escapeHtml(c.text)}</p></div>`).join('')}
+      </div>`;
+    $('#rag-delete-button')?.addEventListener('click', async () => {
+      if (!window.confirm('删除这篇资料？')) return;
+      await fetchJson('/api/rag/delete', { method: 'POST', body: JSON.stringify({ id }) });
+      state.ragSelected = null;
+      $('#rag-detail').classList.add('is-hidden');
+      notify('资料已删除');
+      loadRag();
+    });
+  } catch (error) { notify(error.message, true); }
+}
+
+async function uploadRagFiles(fileList) {
+  const files = [...(fileList || [])];
+  if (!files.length) return;
+  notify(`正在导入 ${files.length} 个文件（解析 → 分块 → 向量化）…`);
+  let ok = 0;
+  for (const file of files) {
+    try {
+      const buf = new Uint8Array(await file.arrayBuffer());
+      let binary = '';
+      for (let i = 0; i < buf.length; i += 0x8000) {
+        binary += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+      }
+      await fetchJson('/api/rag/upload', { method: 'POST', body: JSON.stringify({ filename: file.name, data: btoa(binary) }) });
+      ok += 1;
+    } catch (error) { notify(`${file.name}：${error.message}`, true); }
+  }
+  notify(`已导入 ${ok} / ${files.length} 个文件`);
+  loadRag();
+}
+
+async function ragSearch(query) {
+  const q = (query || '').trim();
+  if (!q) { loadRag(); return; }
+  try {
+    const data = await fetchJson(`/api/rag/search?q=${encodeURIComponent(q)}`);
+    const hits = data.hits || [];
+    const list = $('#rag-list');
+    $('#rag-count').textContent = hits.length;
+    list.innerHTML = hits.length ? hits.map((hit) => `
+      <button class="rag-item" type="button" data-rag-id="${escapeHtml(hit.resource_id)}">
+        <span class="rag-item-title">${escapeHtml(hit.title)} · 段 ${hit.seq + 1} · ${hit.score}</span>
+        <span class="rag-item-meta">${escapeHtml(hit.text.slice(0, 120))}…</span>
+      </button>`).join('') : '<div class="side-empty">没有命中。</div>';
+    list.querySelectorAll('[data-rag-id]').forEach((el) => el.addEventListener('click', () => openRagDoc(el.dataset.ragId)));
+  } catch (error) { notify(error.message, true); }
+}
+
+function switchLibraryTab(tab) {
+  if (state.lib) state.lib.tab = tab;
+  document.querySelectorAll('[data-lib-tab]').forEach((el) => el.classList.toggle('is-active', el.dataset.libTab === tab));
+  $('#rag-pane')?.classList.toggle('is-hidden', tab !== 'rag');
+  $('#library')?.classList.toggle('is-hidden', tab !== 'archive');
+}
+
+function initRagUi() {
+  if (state.ragUiInit) return;
+  state.ragUiInit = true;
+  document.querySelectorAll('[data-lib-tab]').forEach((el) =>
+    el.addEventListener('click', () => switchLibraryTab(el.dataset.libTab)));
+  $('#rag-upload-button')?.addEventListener('click', () => $('#rag-file-input')?.click());
+  $('#rag-file-input')?.addEventListener('change', (event) => { uploadRagFiles(event.target.files); event.target.value = ''; });
+  const drop = $('#rag-drop');
+  if (drop) {
+    drop.addEventListener('dragover', (event) => { event.preventDefault(); drop.classList.add('is-drag'); });
+    drop.addEventListener('dragleave', () => drop.classList.remove('is-drag'));
+    drop.addEventListener('drop', (event) => {
+      event.preventDefault();
+      drop.classList.remove('is-drag');
+      uploadRagFiles(event.dataTransfer?.files);
+    });
+    drop.addEventListener('click', () => $('#rag-file-input')?.click());
+  }
+  let ragTimer;
+  $('#rag-search')?.addEventListener('input', (event) => {
+    window.clearTimeout(ragTimer);
+    ragTimer = window.setTimeout(() => ragSearch(event.target.value.trim()), 260);
+  });
+  switchLibraryTab(state.lib?.tab === 'archive' ? 'archive' : 'rag');
+}
+
 async function loadLibrary() {
   const request = ++state.lib.request;
   const q = $('#library-search')?.value.trim() || '';
@@ -1338,7 +1435,7 @@ function switchView(name, opts = {}) {
   window.scrollTo(0, 0);
   loadData();
   if (panelName === 'diffs') loadDiffs();
-  if (panelName === 'library') loadLibrary();
+  if (panelName === 'library') { initRagUi(); loadRag(); loadLibrary(); }
   if (panelName === 'agents') loadAgents();
   if (panelName === 'health') loadHealth();
 }
@@ -1346,7 +1443,7 @@ function switchView(name, opts = {}) {
 function refreshCurrentView() {
   loadData();
   if (state.currentView === 'diffs') loadDiffs();
-  if (state.currentView === 'library') loadLibrary();
+  if (state.currentView === 'library') { loadRag(); loadLibrary(); }
   if (state.currentView === 'agents') loadAgents();
   if (state.currentView === 'health') loadHealth();
 }
@@ -1366,6 +1463,7 @@ function bind() {
   $('#extract-button').addEventListener('click', startExtract);
   $('#reindex-button').addEventListener('click', reindex);
   $('#new-chat-button').addEventListener('click', newChat);
+  $('#chat-history-button')?.addEventListener('click', toggleChatHistory);
   $('#chat-messages').addEventListener('click', (event) => {
     const starter = event.target.closest('[data-chat-prompt]');
     if (!starter) return;
@@ -1396,46 +1494,6 @@ function bind() {
   $('#dialog-cancel').addEventListener('click', () => $('#action-dialog').close());
   $('#search-input').addEventListener('input', (event) => { window.clearTimeout(searchTimer); searchTimer = window.setTimeout(() => { state.filters.q = event.target.value.trim(); resetMemoryLimit(); loadData(); }, 240); });
   $('#status-filter').addEventListener('change', (event) => { state.filters.status = event.target.value; resetMemoryLimit(); loadData(); });
-  $('#memory-folder-view')?.addEventListener('click', (event) => {
-    const typeButton = event.target.closest('[data-folder-type]');
-    const subjectButton = event.target.closest('[data-folder-subject]');
-    if (!typeButton && !subjectButton) return;
-    state.filters.q = '';
-    $('#search-input').value = '';
-    state.tree = subjectButton
-      ? { type: state.tree.type, subject: subjectButton.dataset.folderSubject || '' }
-      : { type: typeButton.dataset.folderType || '', subject: '' };
-    state.selected = null;
-    resetMemoryLimit();
-    renderDetail(null);
-    renderFacts();
-  });
-  $('#memory-breadcrumb')?.addEventListener('click', (event) => {
-    const rootButton = event.target.closest('[data-memory-root]');
-    const typeButton = event.target.closest('[data-memory-type]');
-    const statusButton = event.target.closest('[data-memory-status]');
-    if (rootButton) {
-      clearMemoryFilters();
-      state.tree = { type: '', subject: '' };
-      resetMemoryLimit();
-      state.selected = null;
-      renderDetail(null);
-      loadData();
-    } else if (statusButton) {
-      state.tree = { type: '', subject: '' };
-      state.selected = null;
-      resetMemoryLimit();
-      renderDetail(null);
-      renderFacts();
-    } else if (typeButton) {
-      state.tree.subject = '';
-      state.selected = null;
-      resetMemoryLimit();
-      renderDetail(null);
-      renderFacts();
-    }
-  });
-  $('#memory-back')?.addEventListener('click', memoryGoBack);
   $('#episode-agent-grid')?.addEventListener('click', (event) => {
     const agentButton = event.target.closest('[data-episode-agent]');
     if (!agentButton) return;

@@ -158,6 +158,33 @@ def _installed(spec: AgentSpec, home: Path, appdata: Path, which: Callable[[str]
     return True
 
 
+def _running_images() -> set[str]:
+    """Lowercase executable names of running processes (Windows only, fail-open)."""
+    if os.name != "nt":
+        return set()
+    try:
+        import subprocess
+
+        out = subprocess.run(["tasklist", "/fo", "csv", "/nh"], capture_output=True,
+                             text=True, timeout=8, creationflags=0x08000000)
+    except Exception:
+        return set()
+    names: set[str] = set()
+    for line in out.stdout.splitlines():
+        match = re.match(r'"([^"]+)"', line.strip())
+        if match:
+            names.add(match.group(1).lower())
+    return names
+
+
+def _is_running(spec: AgentSpec, images: set[str]) -> bool:
+    for image in images:
+        base = image[:-4] if image.endswith(".exe") else image
+        if any(token in base for token in spec.match):
+            return True
+    return False
+
+
 def _has_text(path: Path, needle: str) -> bool:
     try:
         return needle in path.read_text(encoding="utf-8-sig", errors="ignore")
@@ -211,9 +238,10 @@ def _registry_names() -> list[str]:
 
 
 RELAY_RULE = (
-    "每次收到用户新消息，先调用 membrain 的 record_user_message，text 填用户原话，agent 填你的名字，再正常回答。"
-    "只记录用户亲手输入的文字，不要记录你自己的回复、工具输出或检索到的记忆。"
-    "需要回忆时调用 search_memory。不要写入 constraint 类型。"
+    "本机的 membrain 后台服务会自动从你的会话日志捕获用户输入并提炼成长期记忆，通常不需要你写入。"
+    "需要回忆时调用 search_memory。若发现自动捕获没有生效、需要补记一条用户原话时，"
+    "调用 record_user_message（text 填用户原话，agent 填你的名字），或运行下面给出的独立记录工具。"
+    "只记录用户亲手输入的文字，不要记录你自己的回复、工具输出或检索到的记忆。不要写入 constraint 类型。"
 )
 
 
@@ -251,8 +279,11 @@ def build_prompt(spec: AgentSpec, memory_home: Path) -> str:
         return (head + "1. 运行：claude mcp add --scope user membrain -- " + f'"{py}" -m membrain.server' +
                 "\n2. 在 ~/.claude/settings.json 的 hooks 中合并下面的内容（保留已有的钩子，不要重复）：\n" + hooks +
                 "\n3. 完成后让我重新打开 Claude Code。")
+    record_tool = (root / "tools" / "record.py").as_posix()
     return (head + f"位置：{spec.where}。\n添加下面这个 MCP 服务（stdio 方式）：\n{server_json}\n\n"
-            "添加后确认它显示为已连接。然后把下面这条规则加入你的长期指令或规则文件，让它每轮自动执行：\n" + RELAY_RULE)
+            "添加后确认它显示为已连接。然后把下面这条规则加入你的长期指令或规则文件，让它每轮自动执行：\n" + RELAY_RULE +
+            f"\n\n备用的独立记录工具（自动捕获失效时才需要，可直接运行）：{record_tool}\n"
+            f"用法：python \"{record_tool}\" --text \"用户原话\" --agent \"{spec.name}\"")
 
 
 def _spec(key: str) -> AgentSpec:
@@ -348,10 +379,13 @@ def scan(memory_home: Path, home: Path | None = None, appdata: Path | None = Non
     appdata = appdata or Path(os.environ.get("APPDATA") or home / "AppData" / "Roaming")
     items: list[dict[str, Any]] = []
     names = registry()
+    images = _running_images()
     for spec in SPECS:
-        installed = _installed(spec, home, appdata, which, names)
+        running = _is_running(spec, images)
+        installed = running or _installed(spec, home, appdata, which, names)
         items.append({
             "key": spec.key, "name": spec.name, "installed": installed,
+            "running": running,
             "status": _status(spec, home, appdata) if installed else "not_installed",
             "capture": spec.capture, "protected": spec.protected,
             "can_connect": spec.config is not None and not spec.protected,
@@ -362,7 +396,7 @@ def scan(memory_home: Path, home: Path | None = None, appdata: Path | None = Non
         folders.extend(_app_folders(base))
     for name in _others(SPECS, [*names, *folders]):
         generic = AgentSpec("other:" + re.sub(r"\W+", "-", name.lower()), name, ())
-        items.append({"key": generic.key, "name": name, "installed": True, "status": "manual",
-                      "capture": "relay", "protected": False, "can_connect": False,
+        items.append({"key": generic.key, "name": name, "installed": True, "running": False,
+                      "status": "manual", "capture": "relay", "protected": False, "can_connect": False,
                       "prompt": build_prompt(generic, memory_home)})
     return items

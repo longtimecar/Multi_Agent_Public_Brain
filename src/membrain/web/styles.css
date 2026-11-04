@@ -781,3 +781,62 @@ dialog, .dialog-card { border-radius: 16px; }
   .memory-folder { min-height: 142px; }
   .memory-more { padding-inline: 15px; }
 }
+
+/* Chat history dropdown */
+.chat-history-panel { position: absolute; right: 20px; top: 76px; z-index: 30; width: 320px; max-height: 420px; display: flex; flex-direction: column; background: var(--card, #fff); border: 1px solid var(--line, #e6e2da); border-radius: 12px; box-shadow: 0 14px 34px rgba(30, 27, 22, .13); overflow: hidden; }
+.chat-history-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--line, #e6e2da); font-size: 12px; }
+.chat-history-list { overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+.chat-history-item { display: flex; flex-direction: column; gap: 3px; width: 100%; text-align: left; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; cursor: pointer; }
+.chat-history-item:hover { background: var(--surface, #f6f3ee); }
+.chat-history-item.is-current { background: var(--surface, #f6f3ee); outline: 1px solid var(--line, #e6e2da); }
+.chat-history-title { font-size: 12.5px; font-weight: 600; color: var(--ink, #241f1a); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-history-meta { font-size: 11px; color: var(--ink-soft, #7a7268); }
+.chat-panel { position: relative; }
+
+/* Obsidian-style three-pane memory browser */
+.obsidian-panel { display: flex; flex-direction: column; min-height: 68vh; }
+.obsidian-body { display: grid; grid-template-columns: minmax(220px, 1.1fr) minmax(0, 2.2fr) minmax(220px, 1fr); gap: 12px; padding: 0 20px 20px; flex: 1; min-height: 0; }
+.obsidian-tree, .obsidian-main, .obsidian-meta { border: 1px solid var(--line, #e6e2da); border-radius: 12px; background: var(--card, #fff); overflow-y: auto; min-height: 0; }
+.obsidian-tree { padding: 8px; }
+.obsidian-main { padding: 20px 22px; }
+.obsidian-meta { padding: 16px 18px; display: flex; flex-direction: column; gap: 14px; }
+.obsidian-branch { display: flex; flex-direction: column; }
+.obsidian-folder { display: flex; align-items: center; gap: 7px; width: 100%; padding: 7px 9px; border: 0; border-radius: 8px; background: transparent; cursor: pointer; font-size: 12.5px; font-weight: 650; color: var(--ink, #241f1a); text-align: left; }
+.obsidian-folder:hover { background: var(--surface, #f6f3ee); }
+.obsidian-folder-sub { padding-left: 24px; font-weight: 550; }
+.obsidian-caret { width: 12px; flex: none; color: var(--ink-soft, #7a7268); font-size: 10px; }
+.obsidian-folder-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.obsidian-count { margin-left: auto; flex: none; font-size: 10.5px; color: var(--ink-soft, #7a7268); font-weight: 600; background: var(--surface, #f6f3ee); border-radius: 999px; padding: 1px 8px; }
+.obsidian-leaf { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 9px 6px 46px; border: 0; border-radius: 8px; background: transparent; cursor: pointer; text-align: left; }
+.obsidian-leaf:hover { background: var(--surface, #f6f3ee); }
+.obsidian-leaf.is-selected { background: var(--surface, #f6f3ee); outline: 1px solid var(--line, #e6e2da); }
+.obsidian-leaf-title { flex: 1; font-size: 11.5px; color: var(--ink-soft, #7a7268); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.obsidian-leaf.is-selected .obsidian-leaf-title { color: var(--ink, #241f1a); font-weight: 600; }
+.obsidian-leaf-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--line, #d9d3c8); }
+.obsidian-dot-active { background: #3f9e6a; }
+.obsidian-dot-contested { background: #d9a23c; }
+.obsidian-dot-superseded { background: #b6ae9f; }
+.obsidian-dot-retracted { background: #cf6b62; }
+.obsidian-meta .detail-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
+@media (max-width: 1120px) {
+  .obsidian-body { grid-template-columns: 1fr; }
+  .obsidian-tree, .obsidian-meta { max-height: 320px; }
+}
+
+/* RAG library */
+.library-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+.library-tab { padding: 8px 16px; border: 1px solid var(--line, #e6e2da); border-radius: 999px; background: var(--card, #fff); font-size: 12px; font-weight: 650; color: var(--ink-soft, #7a7268); cursor: pointer; }
+.library-tab.is-active { background: var(--ink, #241f1a); color: var(--card, #fff); border-color: var(--ink, #241f1a); }
+.rag-panel { display: flex; flex-direction: column; gap: 14px; padding-bottom: 18px; }
+.rag-drop { margin: 0 20px; border: 1.6px dashed var(--line-strong, #cfc7ba); border-radius: 14px; padding: 26px 18px; text-align: center; background: var(--surface, #f6f3ee); cursor: pointer; transition: border-color .15s ease, background .15s ease; }
+.rag-drop.is-drag { border-color: var(--accent, #b3552e); background: #f8ece4; }
+.rag-drop-mark { font-size: 26px; color: var(--ink-soft, #7a7268); margin-bottom: 4px; }
+.rag-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; padding: 0 20px; }
+.rag-item { display: flex; flex-direction: column; gap: 5px; text-align: left; padding: 12px 14px; border: 1px solid var(--line, #e6e2da); border-radius: 11px; background: var(--card, #fff); cursor: pointer; }
+.rag-item:hover, .rag-item.is-selected { border-color: var(--accent, #b3552e); }
+.rag-item-title { font-size: 12.5px; font-weight: 650; color: var(--ink, #241f1a); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rag-item-meta { font-size: 11px; color: var(--ink-soft, #7a7268); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.rag-detail { margin: 0 20px; border: 1px solid var(--line, #e6e2da); border-radius: 12px; padding: 18px 20px; background: var(--card, #fff); max-height: 52vh; overflow-y: auto; }
+.rag-chunk { display: flex; gap: 10px; padding: 10px 0; border-top: 1px dashed var(--line, #e6e2da); }
+.rag-chunk-seq { flex: none; font-size: 11px; font-weight: 700; color: var(--ink-soft, #7a7268); }
+.rag-chunk p { margin: 0; font-size: 12px; line-height: 1.65; white-space: pre-wrap; }

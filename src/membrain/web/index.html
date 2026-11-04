@@ -89,7 +89,14 @@
               <section class="panel chat-panel" aria-label="Agent 对话">
                 <div class="panel-header">
                   <div><div class="panel-title-row"><h2>与 Agent 对话</h2><span class="panel-meta">记忆已接入</span></div><p class="panel-subtitle">回答会参考当前召回的个人记忆；也可以明确说“更正这条记忆”或“撤回这条记忆”。</p></div>
-                  <button class="icon-button" id="new-chat-button" type="button" title="新建会话" aria-label="新建会话"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+                  <div class="panel-header-actions">
+                    <button class="icon-button" id="chat-history-button" type="button" title="历史会话" aria-label="历史会话"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v4l3 2m6-2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg></button>
+                    <button class="icon-button" id="new-chat-button" type="button" title="新建会话" aria-label="新建会话"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+                  </div>
+                </div>
+                <div class="chat-history-panel is-hidden" id="chat-history-panel">
+                  <div class="chat-history-head"><strong>历史会话</strong><span class="panel-meta" id="chat-history-count"></span></div>
+                  <div class="chat-history-list" id="chat-history-list"><div class="side-empty">正在加载…</div></div>
                 </div>
                 <div class="chat-messages" id="chat-messages" aria-live="polite">
                   <div class="chat-empty">
@@ -184,11 +191,11 @@
 
         <div class="view" data-view-panel="memories">
           <section class="workspace-grid memory-workspace" id="memories">
-            <div class="panel memory-panel">
+            <div class="panel memory-panel obsidian-panel">
               <div class="panel-header panel-header-stack">
                 <div>
                   <div class="panel-title-row"><h2>全部记忆</h2><span class="count-pill" id="memory-count">0</span></div>
-                  <p class="panel-subtitle">按 L1 文件夹逐层浏览；进入主题后显示 L0 摘要，点条目查看 L2 正文</p>
+                  <p class="panel-subtitle">左栏 L1 分类树（点箭头逐层展开），中间 L2 正文，右栏基础信息</p>
                 </div>
                 <div class="toolbar">
                   <label class="search-field">
@@ -204,26 +211,18 @@
                   </select>
                 </div>
               </div>
-              <div class="memory-pathbar">
-                <button class="memory-back" id="memory-back" type="button" aria-label="返回上一级" disabled>
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg>
-                </button>
-                <nav class="memory-breadcrumb" id="memory-breadcrumb" aria-label="记忆文件夹路径"></nav>
-                <span class="memory-layer-legend">L1 分类 · L0 摘要 · L2 正文</span>
+              <div class="obsidian-body">
+                <aside class="obsidian-tree" id="obsidian-tree" aria-label="记忆目录树"><div class="side-empty">正在整理…</div></aside>
+                <section class="obsidian-main" id="obsidian-main" aria-label="L2 正文">
+                  <div class="detail-empty" id="obsidian-empty">
+                    <div class="detail-empty-mark">L2</div>
+                    <h2>选择一条记忆</h2>
+                    <p>左栏点条目，这里显示正文与原文证据。</p>
+                  </div>
+                </section>
+                <aside class="obsidian-meta" id="obsidian-meta" aria-label="基础信息"></aside>
               </div>
-              <div class="memory-folder-view" id="memory-folder-view" aria-live="polite"><div class="side-empty">正在整理文件夹…</div></div>
-              <div class="table-head" id="memory-table-head"><span>L0 摘要</span><span>状态</span><span>证据</span></div>
-              <div class="memory-list" id="memory-list" aria-live="polite"></div>
             </div>
-
-            <aside class="panel detail-panel is-hidden" id="detail-panel" aria-label="记忆详情">
-              <div class="detail-empty" id="detail-empty">
-                <div class="detail-empty-mark">L2</div>
-                <h2>选择一条记忆</h2>
-                <p>查看原文证据、来源和生命周期操作。</p>
-              </div>
-              <div class="detail-content is-hidden" id="detail-content"></div>
-            </aside>
           </section>
         </div>
 
@@ -276,18 +275,45 @@
             <div class="import-card" id="session-import-card"><div class="side-empty">正在扫描本机 Agent 会话…</div></div>
             <div class="import-card" id="import-card"><div class="side-empty">正在检查可导入的内容…</div></div>
           </details>
-          <section class="workspace-grid" id="library">
+          <div class="library-tabs" role="tablist">
+            <button class="library-tab is-active" type="button" data-lib-tab="rag">文档资料 · RAG</button>
+            <button class="library-tab" type="button" data-lib-tab="archive">会话归档</button>
+          </div>
+          <section class="panel rag-panel" id="rag-pane">
+            <div class="panel-header panel-header-stack">
+              <div>
+                <div class="panel-title-row"><h2>资料库</h2><span class="count-pill" id="rag-count">0</span></div>
+                <p class="panel-subtitle">把文件拖进来，自动解析、分块、向量化；问 Agent 时可按语义检索原文段落</p>
+              </div>
+              <div class="toolbar">
+                <label class="search-field">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+                  <input id="rag-search" type="search" placeholder="语义检索资料库正文段落" aria-label="检索资料库" autocomplete="off">
+                </label>
+                <button class="button button-dark" id="rag-upload-button" type="button">选择文件</button>
+                <input id="rag-file-input" type="file" multiple hidden accept=".txt,.md,.markdown,.log,.csv,.json,.html,.htm,.docx,.pdf">
+              </div>
+            </div>
+            <div class="rag-drop" id="rag-drop">
+              <div class="rag-drop-mark" aria-hidden="true">⤓</div>
+              <p><strong>拖文件到这里</strong>（txt / md / csv / json / html / docx / pdf）</p>
+              <p class="panel-subtitle">解析 → 分块 → LLM 摘要 → embedding 向量化 → 混合检索</p>
+            </div>
+            <div class="rag-list" id="rag-list"><div class="side-empty">正在加载文档…</div></div>
+            <div class="rag-detail is-hidden" id="rag-detail"></div>
+          </section>
+          <section class="workspace-grid is-hidden" id="library">
             <aside class="panel tree-panel" aria-label="资料分类">
               <div class="panel-header"><div><h2>资料分类</h2><p class="panel-subtitle">L1：来源 → 类别</p></div></div>
               <div class="tree-list" id="library-tree"></div>
             </aside>
             <div class="panel library-panel">
               <div class="panel-header">
-                <div><div class="panel-title-row"><h2>资料库</h2><span class="count-pill" id="library-count">0</span></div>
-                <p class="panel-subtitle">L0 摘要列表 · 选中条目查看 L2 正文</p></div>
+                <div><div class="panel-title-row"><h2>会话归档</h2><span class="count-pill" id="library-count">0</span></div>
+                <p class="panel-subtitle">导入的 Agent 历史会话存档 · 选中条目查看 L2 正文</p></div>
               </div>
               <div class="library-tools">
-                <input id="library-search" type="search" placeholder="搜索资料库，例如：项目决策、偏好变化" aria-label="搜索资料库" autocomplete="off">
+                <input id="library-search" type="search" placeholder="搜索会话归档，例如：项目决策、偏好变化" aria-label="搜索会话归档" autocomplete="off">
               </div>
               <div class="library-list" id="library-list"><div class="side-empty">正在加载资料…</div></div>
             </div>

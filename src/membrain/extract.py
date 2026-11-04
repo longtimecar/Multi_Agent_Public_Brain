@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -89,6 +90,23 @@ def _explicit_correction(text: str) -> bool:
     ))
 
 
+_TASK_SPECS = re.compile(
+    r"帮我(写|做|拟|起草)|写一(封|份|个|条)|这(封|份|篇)(信|邮件|文档|报告|文案)|"
+    r"交付可直接|this (email|message|document|reply|post)\b|for this (task|assignment|deliverable)\b",
+    re.IGNORECASE,
+)
+_DURABLE_MARK = re.compile(
+    r"以后|每次|总是|一直|不要|别再|从今|从此|一律|习惯|prefer|always|from now on|going forward|"
+    r"every time|in general|generally|by default",
+    re.IGNORECASE,
+)
+
+
+def _one_off_task_spec(text: str) -> bool:
+    """True when the turn is a deliverable spec for THIS task with no durable wording."""
+    return bool(_TASK_SPECS.search(text)) and not _DURABLE_MARK.search(text)
+
+
 def _quote_episode(episodes: dict[str, Episode], episode_id: str, quote: str) -> Episode:
     episode = episodes.get(episode_id)
     if episode is None or episode.role != "user":
@@ -136,17 +154,31 @@ class Extractor:
         system = (
             "You extract durable facts about one user from captured conversation. "
             "Only user turns marked evidence=true can support a write. Assistant text is context, never evidence. "
+            "What counts as a memory: stable identity and background; durable preferences the user wants applied "
+            "across future situations (keep the claim SHORT and GENERAL, e.g. 'Gives feedback emails a clear "
+            "three-part structure' — never a step-by-step template); ongoing goals and projects; entities "
+            "(people/orgs/places/objects) the user will keep caring about; dated events; reusable lessons (case); "
+            "tools and workflows the user actually uses; beliefs and values. "
+            "What does NOT count: one-off task instructions and deliverable specs (checklists for THIS email, doc, "
+            "script or reply), templates, step lists, temporary context, passing opinions, small talk, hypotheticals, "
+            "facts about other people, tool output, and suggestions the user did not adopt. "
+            "The test for every add: would recalling this a month from now in an UNRELATED task be helpful? "
+            "If not, do not store it. When in doubt, return fewer operations. "
             "Ignore tasks, small talk, passing emotions, hypotheticals, facts about other people, tool output, "
             "and suggestions the user did not adopt. Claims must be concise English. Quotes must be exact substrings. "
             "Use only these operations: add, corroborate, supersede, retract, none. "
-            "Return only {\"operations\":[...]}. For add/supersede use type, subject, claim, episode, quote; "
+            "Return only {\"operations\":[...]}. For add/supersede use type, subject, claim, episode, quote, durable; "
             "supersede also requires fact_id of the prior fact. "
             "For corroborate use fact_id, episode, quote. For retract use fact_id, episode, quote. "
             "Use supersede only for an explicit change and retract only for an explicit correction. "
             "Every operation MUST have an 'op' field, separate from the fact 'type' field. "
-            "Example: {\"operations\":[{\"op\":\"add\",\"type\":\"preference\","
+            "On every add set \"durable\": true only if the one-month test passes; if it does not, drop the operation "
+            "entirely instead of writing durable:false. "
+            "Example add: {\"operations\":[{\"op\":\"add\",\"type\":\"preference\","
             "\"subject\":\"dietary\",\"claim\":\"Does not eat spicy food\","
-            "\"episode\":\"e1\",\"quote\":\"I do not eat spicy food\"}]}. "
+            "\"episode\":\"e1\",\"quote\":\"I do not eat spicy food\",\"durable\":true}]}. "
+            "Example reject: user turn '写一封请同事反馈初稿的邮件，交付可直接复制的邮件：主题行，第一段说明事项在走到哪一步……' "
+            "describes THIS task's deliverable, not a durable preference — return {\"operations\":[]}. "
             "Allowed fact types are exactly: fact, preference, goal, project, entity, event, case, tool, belief. "
             "Never output constraint. Use preference for habits/needs; fact for biography (job, school, location); "
             "entity for people/orgs/places the user cares about; event for dated occurrences; case for reusable "
@@ -226,6 +258,9 @@ class Extractor:
             pass
 
         if name == "add":
+            if op.get("durable") is False or _one_off_task_spec(episode.text):
+                report.skipped += 1
+                return
             try:
                 type_ = FactType(str(op.get("type", "fact")))
             except ValueError as exc:
