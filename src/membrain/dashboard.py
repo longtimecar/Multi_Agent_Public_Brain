@@ -285,22 +285,57 @@ class DashboardRuntime:
                     raise RuntimeError(f"calibrate.py 未找到（{script}）。从源码部署时才提供召回验证。")
                 env = os.environ.copy()
                 env["MEMBRAIN_HOME"] = str(self.service.settings.home)
-                completed = subprocess.run(
-                    [sys.executable, str(script), "--baseline-path", str(baseline_path), "--strict"],
-                    capture_output=True, text=True, timeout=600, env=env,
-                    encoding="utf-8", errors="replace",
+                started = time.monotonic()
+                proc = subprocess.Popen(
+                    [sys.executable, "-u", str(script), "--baseline-path", str(baseline_path), "--strict"],
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, encoding="utf-8", errors="replace", env=env,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-                report = {
-                    "exit_code": completed.returncode,
-                    "output": (completed.stdout or "")[-4000:],
-                    "error": (completed.stderr or "")[-1000:],
-                    "ok": completed.returncode == 0,
-                }
+                import queue as _queue
+
+                out_q: "_queue.Queue[str | None]" = _queue.Queue()
+
+                def _pump() -> None:
+                    try:
+                        for raw in proc.stdout or ():
+                            out_q.put(raw.rstrip("\n"))
+                    finally:
+                        out_q.put(None)  # end-of-stream sentinel
+
+                threading.Thread(target=_pump, daemon=True).start()
+                lines: list[str] = []
+                deadline = started + 600
+                last_line = ""
+                while True:
+                    if time.monotonic() > deadline:
+                        proc.kill()
+                        raise RuntimeError("验证超时（10 分钟），已终止。")
+                    try:
+                        item = out_q.get(timeout=2)
+                    except _queue.Empty:
+                        item = "<tick>"  # silent: refresh elapsed only
+                    if item is None:
+                        break
+                    if item != "<tick>":
+                        if item:
+                            lines.append(item)
+                            last_line = item
+                    with self._recall_job_lock:
+                        if self._recall_job.get("id") == job_id:
+                            self._recall_job["progress"] = {
+                                "line": last_line[:200],
+                                "elapsed": int(time.monotonic() - started),
+                            }
+                code = proc.wait(timeout=30)
+                report = {"exit_code": code, "output": "\n".join(lines)[-4000:],
+                          "error": "", "ok": code == 0}
                 with self._recall_job_lock:
-                    self._recall_job = {"id": job_id, "status": "done", "report": report, "error": None}
+                    self._recall_job = {"id": job_id, "status": "done", "report": report,
+                                        "error": None, "progress": None}
             except Exception as exc:
                 with self._recall_job_lock:
-                    self._recall_job = {"id": job_id, "status": "error", "report": None, "error": str(exc)}
+                    self._recall_job = {"id": job_id, "status": "error", "report": None,
+                                        "error": str(exc), "progress": None}
 
         threading.Thread(target=run, daemon=True).start()
         return dict(self._recall_job), True

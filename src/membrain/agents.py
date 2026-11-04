@@ -74,10 +74,18 @@ SPECS: tuple[AgentSpec, ...] = (
     AgentSpec("vscode", "VS Code (Copilot 等插件)", ("visual studio code", "vscode"), commands=("code",),
               paths=("%APPDATA%/Code",),
               config="%APPDATA%/Code/User/mcp.json", servers_key="servers"),
+    AgentSpec("grok-bot", "Grok Bot", ("grok bot", "grokbot", "grok"),
+              paths=("%APPDATA%/Grok Bot", "~/.grokbot"),
+              config="~/.grokbot/settings.json", servers_key="mcpBoxServers", style="grokbot",
+              where="在 Grok Bot 的 设置 → MCP 里添加一个自定义 MCP 服务"),
+    AgentSpec("marvis", "Marvis", ("marvis",),
+              paths=("%LOCALAPPDATA%/Marvis", "%APPDATA%/marvis", "~/.marvis"),
+              where="在 Marvis 的设置或技能里添加自定义 MCP 服务；没有该入口就写进它的长期指令"),
 )
 
 # Names worth reporting when found by the scan but not described above.
 KEYWORDS = ("claude", "codex", "cursor", "gemini", "copilot", "trae", "qoder", "kimi", "doubao", "deepseek",
+            "grok", "marvis", "windsurf", "cline", "roo", "aider", "zed",
             "codebuddy", "windsurf", "cline", "aider", "hermes", "qwen", "qianwen", "agent")
 
 # A trailing version turns one product into several entries in the Windows
@@ -224,6 +232,8 @@ def _status(spec: AgentSpec, home: Path, appdata: Path) -> str:
         servers = _read_json(path).get(spec.servers_key, {})
     except AgentError:
         return "unreadable"
+    if isinstance(servers, list):  # e.g. Grok Bot's mcpBoxServers
+        return "connected" if any(isinstance(s, dict) and s.get("name") == SERVER_NAME for s in servers) else "not_connected"
     return "connected" if isinstance(servers, dict) and SERVER_NAME in servers else "not_connected"
 
 
@@ -322,16 +332,27 @@ def connect(key: str, memory_home: Path, home: Path | None = None, appdata: Path
             f"请先安装并启动一次 {spec.name}，让它生成配置目录后再点一键接入；"
             f"或现在就点“复制提示词”，在软件里手动添加。")
     data = _read_json(path) if path.exists() else {}
-    servers = data.setdefault(spec.servers_key, {})
-    if not isinstance(servers, dict):
-        raise AgentError("配置里的 MCP 部分格式特殊，不能自动修改。请改用复制提示词。")
-    if SERVER_NAME in servers:
-        return {"ok": True, "changed": False, "backup": None}
+    servers = data.setdefault(spec.servers_key, [] if spec.style == "grokbot" else {})
+    if spec.style == "grokbot":
+        if not isinstance(servers, list):
+            raise AgentError("配置里的 MCP 列表格式特殊，不能自动修改。请改用复制提示词。")
+        if any(isinstance(s, dict) and s.get("name") == SERVER_NAME for s in servers):
+            return {"ok": True, "changed": False, "backup": None}
+    else:
+        if not isinstance(servers, dict):
+            raise AgentError("配置里的 MCP 部分格式特殊，不能自动修改。请改用复制提示词。")
+        if SERVER_NAME in servers:
+            return {"ok": True, "changed": False, "backup": None}
     backup = None
     if path.exists():
         backup = path.with_name(f"{path.name}.bak-membrain-{datetime.now():%Y%m%d-%H%M%S}")
         shutil.copy2(path, backup)
-    servers[SERVER_NAME] = server_entry(spec.style, memory_home)
+    if spec.style == "grokbot":
+        entry = server_entry("standard", memory_home)
+        servers.append({"name": SERVER_NAME, "command": entry["command"],
+                        "args": entry.get("args", []), "env": entry.get("env", {})})
+    else:
+        servers[SERVER_NAME] = server_entry(spec.style, memory_home)
     temp = path.with_name(path.name + ".membrain-tmp")
     temp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(temp, path)
@@ -359,11 +380,19 @@ def disconnect(key: str, home: Path | None = None, appdata: Path | None = None) 
         return {"ok": True, "config_removed": False, "manual": False}
     data = _read_json(path)
     servers = data.get(spec.servers_key)
-    if not isinstance(servers, dict) or SERVER_NAME not in servers:
+    keep: list[Any] | None = None
+    if isinstance(servers, list):  # e.g. Grok Bot's mcpBoxServers
+        keep = [s for s in servers if not (isinstance(s, dict) and s.get("name") == SERVER_NAME)]
+        if len(keep) == len(servers):
+            return {"ok": True, "config_removed": False, "manual": False}
+    elif not isinstance(servers, dict) or SERVER_NAME not in servers:
         return {"ok": True, "config_removed": False, "manual": False}
     backup = path.with_name(f"{path.name}.bak-membrain-{datetime.now():%Y%m%d-%H%M%S}")
     shutil.copy2(path, backup)
-    servers.pop(SERVER_NAME)
+    if keep is not None:
+        data[spec.servers_key] = keep
+    else:
+        servers.pop(SERVER_NAME)
     temp = path.with_name(path.name + ".membrain-tmp")
     temp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(temp, path)

@@ -107,3 +107,34 @@ def test_sibling_registry_names_do_not_count_for_deepseek(tmp_path):
                              registry_names=["DeepSeek Harness 0.2.1-rc.3"]) is False
     assert agents._installed(spec, home, appdata, which=which,
                              registry_names=["DeepSeek 3.0"]) is True
+
+
+def test_grok_bot_list_style_connect_and_disconnect(tmp_path):
+    home = tmp_path / "home"
+    appdata = home / "AppData" / "Roaming"
+    (home / ".grokbot").mkdir(parents=True)
+    cfg = home / ".grokbot" / "settings.json"
+    cfg.write_text(json.dumps({"mcpBoxServers": [], "theme": "dark"}), encoding="utf-8")
+    result = agents.connect("grok-bot", tmp_path / "memory", home=home, appdata=appdata)
+    assert result["changed"] is True
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    assert isinstance(data["mcpBoxServers"], list) and data["mcpBoxServers"][0]["name"] == "membrain"
+    assert data["theme"] == "dark"  # 其他设置不动
+    assert agents._status(agents._spec("grok-bot"), home, appdata) == "connected"
+    again = agents.connect("grok-bot", tmp_path / "memory", home=home, appdata=appdata)
+    assert again["changed"] is False
+    disc = agents.disconnect("grok-bot", home=home, appdata=appdata)
+    assert disc["config_removed"] is True
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    assert data["mcpBoxServers"] == []
+
+
+def test_marvis_is_detected_but_prompt_only(tmp_path):
+    home = tmp_path / "home"
+    appdata = home / "AppData" / "Roaming"
+    (home / ".marvis").mkdir(parents=True)
+    items = {i["key"]: i for i in agents.scan(tmp_path / "memory", home=home, appdata=appdata,
+                                              which=lambda c: None, registry=lambda: ["Marvis"])}
+    assert items["marvis"]["installed"] is True
+    assert items["marvis"]["can_connect"] is False
+    assert items["grok-bot"]["installed"] is False

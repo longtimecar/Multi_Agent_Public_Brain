@@ -618,15 +618,38 @@ let recallVerifyTimer;
 async function startRecallVerify() {
   const button = $('#recall-verify-button');
   button.disabled = true;
-  $('#recall-verify-result').textContent = '正在后台验证（82 组黄金样例，需要一点时间）…';
+  $('#recall-verify-result').textContent = '正在后台验证（82 组黄金样例）…';
   try {
     await fetchJson('/api/recall/verify', { method: 'POST', body: '{}' });
     clearInterval(recallVerifyTimer);
+    let fails = 0;
     recallVerifyTimer = setInterval(async () => {
-      const status = await fetchJson('/api/recall/verify/status');
-      if (status.status === 'running') return;
+      let status;
+      try {
+        status = await fetchJson('/api/recall/verify/status');
+        fails = 0;
+      } catch (error) {
+        fails += 1;
+        if (fails >= 5) {
+          clearInterval(recallVerifyTimer);
+          button.disabled = false;
+          $('#recall-verify-result').textContent = `查不到验证状态（${error.message}），请重新点击。`;
+        }
+        return;
+      }
+      if (status.status === 'running') {
+        const p = status.progress || {};
+        const line = p.line ? ` ${p.line}` : '';
+        const elapsed = p.elapsed ? `（已用 ${p.elapsed} 秒）` : '…';
+        $('#recall-verify-result').textContent = `正在后台验证…${line}${elapsed}`;
+        return;
+      }
       clearInterval(recallVerifyTimer);
       button.disabled = false;
+      if (status.status === 'idle') {
+        $('#recall-verify-result').textContent = '验证任务已丢失（服务可能重启过），请重新点击。';
+        return;
+      }
       const report = status.report || {};
       if (status.error) { $('#recall-verify-result').textContent = `验证出错：${status.error}`; return; }
       const lastLines = String(report.output || '').trim().split('\n').slice(-3).join(' | ');
