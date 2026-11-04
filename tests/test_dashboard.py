@@ -242,7 +242,7 @@ def test_dashboard_chat_and_model_status_keep_assistant_out_of_memory_evidence(t
     )
     stored_fact = service.store.write_fact(fact)
     service.retriever.sync_fact(stored_fact)
-    fake = FakeLLMClient(["连接正常", "你好，这里是个人 Agent。"])
+    fake = FakeLLMClient(["连接正常", {"action": "reply", "args": {"text": "你好，这里是个人 Agent。"}}])
     runtime = DashboardRuntime(service, llm_client=fake, auto_extract_chat=False)
     server = create_server("127.0.0.1", 0, runtime)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -268,7 +268,7 @@ def test_dashboard_chat_and_model_status_keep_assistant_out_of_memory_evidence(t
         assert status == 200 and result["answer"] == "你好，这里是个人 Agent。"
         assert result["session_id"] == "dashboard-test-session" and result["episode_id"]
         assert [item["id"] for item in result["memory"]] == [stored_fact.id]
-        assert "The user is building the Membrain" in fake.calls[-1][0]
+        assert "The user is building the Membrain" in fake.calls[-1][1]
         episodes = [episode for episode in service.store.iter_episodes()
                     if episode.session == result["session_id"]]
         assert [episode.role for episode in episodes] == ["user", "assistant"]
@@ -288,21 +288,24 @@ def test_dashboard_chat_corrects_a_memory_only_from_matching_user_evidence(tmp_p
     service = MemoryService(make_settings(tmp_path))
     fact = write(service.store, "Prefers tea", "drink", FactType.PREFERENCE, quote="I prefer tea.")
     service.retriever.sync_fact(fact)
-    fake = FakeLLMClient([{"action": "correct", "memory_id": fact.id,
-                           "replacement_claim": "Prefers coffee"}])
+    fake = FakeLLMClient([
+        {"action": "correct", "args": {"memory_id": fact.id, "replacement_claim": "Prefers coffee"}},
+        {"action": "reply", "args": {"text": "已更正：现在更喜欢咖啡。"}},
+    ])
     runtime = DashboardRuntime(service, llm_client=fake, auto_extract_chat=False)
     try:
         result = runtime.chat(
             "Correct this memory: I no longer drink tea; I prefer coffee.",
             session_id="chat-correction",
         )
-        assert result["memory_action"]["ok"] and result["memory_action"]["action"] == "correct"
-        assert "已更正" in result["answer"]
+        assert result["memory_action"]["action"] == "correct"
+        assert result["memory_action"]["old_claim"] == "Prefers tea"
+        assert result["answer"] == "已更正：现在更喜欢咖啡。"
         assert service.store.get_fact(fact.id).status.value == "superseded"
         replacement = service.store.get_fact(result["memory_action"]["replacement_id"])
         assert replacement.claim == "Prefers coffee" and replacement.is_live
         assert replacement.evidence[0].episode == result["episode_id"]
-        assert len(fake.calls) == 1  # planner only; the confirmation is deterministic
+        assert len(fake.calls) == 2  # one action turn + the final reply turn
     finally:
         service.index.close()
 
@@ -314,17 +317,21 @@ def test_dashboard_chat_retracts_a_memory_and_does_not_guess_on_ambiguity(tmp_pa
     fact = write(service.store, "Prefers tea", "drink", FactType.PREFERENCE, quote="I like tea.")
     service.retriever.sync_fact(fact)
     runtime = DashboardRuntime(service, llm_client=FakeLLMClient([
-        {"action": "none"},
-        {"action": "retract", "memory_id": fact.id},
+        {"action": "reply", "args": {"text": "目标不唯一，请给出要撤回的记忆原句。"}},
     ]), auto_extract_chat=False)
     try:
         ambiguous = runtime.chat("Correct this memory: tea.", session_id="chat-ambiguous")
-        assert "没有执行更改" in ambiguous["answer"]
+        assert "目标不唯一" in ambiguous["answer"]
         assert ambiguous["memory_action"] is None
         assert service.store.get_fact(fact.id).is_live
 
+        # the retract run reuses the same scriptable client with a fresh script
+        runtime.llm_client.responses.extend([
+            {"action": "retract", "args": {"memory_id": fact.id}},
+            {"action": "reply", "args": {"text": "已撤回该记忆。"}},
+        ])
         removed = runtime.chat("Retract this memory: I no longer like tea.", session_id="chat-retract")
-        assert removed["memory_action"]["ok"] and removed["memory_action"]["action"] == "retract"
+        assert removed["memory_action"]["action"] == "retract"
         assert service.store.get_fact(fact.id).status.value == "retracted"
     finally:
         service.index.close()
@@ -337,12 +344,12 @@ def test_dashboard_general_preference_question_supplies_saved_memory_to_model(tm
     fact = write(service.store, "Likes eating chili peppers", "dietary", FactType.PREFERENCE,
                  quote="I like eating chili peppers.")
     service.retriever.sync_fact(fact)
-    fake = FakeLLMClient(["You have said that you like chili peppers."])
+    fake = FakeLLMClient([{"action": "reply", "args": {"text": "You have said that you like chili peppers."}}])
     runtime = DashboardRuntime(service, llm_client=fake, auto_extract_chat=False)
     try:
         result = runtime.chat("查询一下我的记忆，我平时爱干嘛", session_id="test-overview")
         assert [item["id"] for item in result["memory"]] == [fact.id]
-        assert "Likes eating chili peppers" in fake.calls[-1][0]
+        assert "Likes eating chili peppers" in fake.calls[-1][1]
         assert result["memory_mode"] == "overview"
     finally:
         service.index.close()
@@ -395,6 +402,60 @@ def test_dashboard_saves_model_config_without_returning_the_key(tmp_path):
         service.index.close()
 
 
+def test_dashboard_admin_records_a_memory_only_from_verbatim_user_words(tmp_path):
+    from test_core import make_settings, write
+
+    service = MemoryService(make_settings(tmp_path))
+    fact = write(service.store, "Prefers tea", "drink", FactType.PREFERENCE, quote="I prefer tea.")
+    service.retriever.sync_fact(fact)
+    runtime = DashboardRuntime(service, llm_client=FakeLLMClient([
+        {"action": "record", "args": {"type": "preference", "subject": "drink",
+                                       "claim": "Prefers coffee now", "quote": "I actually prefer coffee now."}},
+        {"action": "search", "args": {"query": "coffee", "top_k": 3}},
+        {"action": "reply", "args": {"text": "已记录并检索确认。"}},
+    ]), auto_extract_chat=False)
+    try:
+        message = "我改主意了，I actually prefer coffee now. 不是茶了。"
+        result = runtime.chat(message, session_id="admin-record")
+        assert result["memory_action"]["action"] == "record"
+        assert result["memory_action"]["claim"] == "Prefers coffee now"
+        stored = service.store.get_fact(result["memory_action"]["memory_id"])
+        assert stored.is_live and stored.evidence[0].quote == "I actually prefer coffee now."
+        assert result["actions"][0]["ok"] is True
+        # the fabricated quote was rejected by the verbatim check on the first attempt? No:
+        # the first attempt quoted real words; now verify a fabricated one is rejected.
+        runtime.llm_client.responses.extend([
+            {"action": "record", "args": {"type": "fact", "subject": "food",
+                                           "claim": "Hates spicy food", "quote": "I hate spicy food."}},
+            {"action": "reply", "args": {"text": "没有记录，因为你没有说过这句话。"}},
+        ])
+        rejected = runtime.chat("我最近饮食正常。", session_id="admin-record-fake")
+        assert rejected["actions"][0]["ok"] is False
+        assert "逐字" in rejected["actions"][0]["result"]["error"]
+        assert rejected["memory_action"] is None
+    finally:
+        service.index.close()
+
+
+def test_dashboard_admin_reports_empty_store_and_replies(tmp_path):
+    from test_core import make_settings
+
+    service = MemoryService(make_settings(tmp_path))
+    runtime = DashboardRuntime(service, llm_client=FakeLLMClient([
+        {"action": "search", "args": {"query": "preference", "top_k": 5}},
+        {"action": "stats"},
+        {"action": "reply", "args": {"text": "记忆库目前是空的；你正常对话后记忆会逐步积累。"}},
+    ]), auto_extract_chat=False)
+    try:
+        result = runtime.chat("帮我管理记忆", session_id="admin-empty")
+        assert result["answer"].startswith("记忆库目前是空的")
+        assert result["actions"][0]["result"]["results"] == []
+        assert result["actions"][1]["result"]["visible_live_memories"] == 0
+        assert len(result["actions"]) == 2
+    finally:
+        service.index.close()
+
+
 def test_dashboard_chat_starts_background_extraction(tmp_path, monkeypatch):
     settings = Settings(
         home=tmp_path / "memory",
@@ -408,7 +469,8 @@ def test_dashboard_chat_starts_background_extraction(tmp_path, monkeypatch):
         llm_model="fake-chat",
     )
     service = MemoryService(settings)
-    runtime = DashboardRuntime(service, llm_client=FakeLLMClient(["好的。"]), auto_extract_chat=True)
+    runtime = DashboardRuntime(service, llm_client=FakeLLMClient([
+        {"action": "reply", "args": {"text": "好的。"}}]), auto_extract_chat=True)
     started: list[int] = []
     monkeypatch.setattr(runtime, "start_extract", lambda: started.append(1) or ({"status": "running"}, True))
     runtime.chat("我正在做一个跨 Agent 个人记忆项目。", session_id="extract-chat")
