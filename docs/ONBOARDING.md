@@ -1,21 +1,20 @@
 # membrain 新接手者手册
 
-> 面向第一次接触本仓库的开发者。读完这份文档，你应该能独立搭建环境、理解每个模块的职责、
-> 知道数据怎么流动、以及改动时哪些红线不能碰。
-> 设计动机的完整论述见 [DESIGN.md](DESIGN.md)，当前任务清单见 [PLAN.md](PLAN.md)。
+> 第一次接触本仓库的话，从这份文档开始：装环境、认模块、搞懂数据怎么流动，
+> 以及动手前有哪些地方不能碰。设计动机的完整论述在 [DESIGN.md](DESIGN.md)，
+> 任务清单在 [PLAN.md](PLAN.md)。
 
 ## 阅读指南：先读哪几章
 
-**你只想把 membrain 用起来（部署 / 配置 / 日常管理）**——读这三章就够了：
-**1（项目定位）→ 6（搭建运行）→ 8（配置参考）**；遇到"Agent 能做什么/断开会怎样"的
-问题再查 **9.4 能力边界** 和 **9.5 生命周期**。
+**只想把 membrain 用起来**（部署、配置、日常管理）：读 **1（项目定位）→ 6（搭建运行）
+→ 8（配置参考）** 三章就够用了。"Agent 能做什么、断开会怎样"这类问题查 **9.4 能力边界**
+和 **9.5 生命周期**。
 
-**你要改 membrain 的代码**——按顺序通读：**2（设计规则）→ 3（技术栈）→ 4（目录导览）→
-5（架构与数据流）→ 9（Agent 体系）→ 10（红线）**，其中第 2 章和 10.2 的改动红线是
-动代码前的硬性前置。
+**要改 membrain 的代码**：按顺序通读 **2（设计规则）→ 3（技术栈）→ 4（目录导览）→
+5（架构与数据流）→ 9（Agent 体系）→ 10（红线）**。第 2 章和 10.2 是动代码前的硬性前置。
 
-**边界模糊的两处**：第 7 章前半（跑测试/校准）属于运维，后半（用例结构）属于开发；
-9.2（识别手段）的机制给开发，"为什么我的 Agent 没被识别"的答案也给用户。
+有两章归属模糊：第 7 章前半（跑测试、跑校准）算运维，后半（用例结构）算开发；
+9.2 讲的识别机制是给开发的，但"为什么我的 Agent 没被识别出来"的答案也在那里。
 
 ---
 
@@ -23,25 +22,27 @@
 
 **membrain 是一个可移植、用户自有、跨 Agent 共享的个人长期记忆系统。**
 
-它解决五个真实痛点：各 AI Agent 记忆互不打通、认知碎片化、厂商锁定、手动管理负担、
-记忆无法自我修正。实现方式是一个**本地运行的记忆服务**：
+起因很实际：我同时在用五六个 AI Agent，每个都要重新自我介绍；它们对我的认知经常互相
+矛盾，A 说我不吃辣，B 推荐水煮鱼；记忆绑在各自平台上，换工具就丢；时间长了，整理和
+纠正这些记忆本身就成了一摊事。所以做了 membrain——一个跑在本地的记忆服务：
 
-- 任何 Agent（Claude Code、Codex、Cursor、千问……）通过 **MCP 协议**或 **hooks** 读写同一份记忆；
-- 记忆以 **Markdown + JSONL 明文文件**存放在用户自己的磁盘上，数据库只是可重建的索引；
+- 任何 Agent（Claude Code、Codex、Cursor、千问……）通过 **MCP 协议**或 **hooks** 读写
+  同一份记忆；
+- 记忆以 **Markdown + JSONL 明文文件**存在用户自己的磁盘上，数据库只是可重建的索引；
 - 任何写入都必须携带**用户原话作为证据**，模型不能凭空捏造记忆；
-- 生命周期（更正/撤回/冲突）通过**追加式账本（ledger）**管理，原始文件永不改动。
+- 生命周期（更正/撤回/冲突）走**追加式账本（ledger）**，原始文件永不改动。
 
-一句话：**记忆是用户的资产，membrain 只是管家。**
+记忆是用户的资产，membrain 只负责管理它。
 
 ---
 
 ## 2. 核心设计规则（改动前必读）
 
-以下规则贯穿全部代码，破坏任何一条都等于破坏项目根基：
+这几条不是风格偏好，是踩过坑之后定下的约束，改代码前先看完：
 
 1. **Append-only**：`facts/<id>.md` 写入后永不原地修改。生命周期变化追加到
    `ledger.jsonl`，读取时 fold 出当前状态。
-2. **证据优先（No quote, no write）**：每条记忆必须携带用户原话的逐字引用和来源
+2. **证据优先（No quote, no write）**：每条记忆必须带用户原话的逐字引用和来源
    episode。MCP 层和 Dashboard 聊天层都强制校验 `quote` 是用户本轮消息的子串。
 3. **置信度由代码计算**：`confidence.py` 从证据结构（条数、时间跨度、stated/inferred、
    矛盾状态）推导，**从不信任模型自评**。单条观察封顶 0.40，明确陈述封顶 0.70。
@@ -49,8 +50,8 @@
    `membrain resolve`（人类）能做。
 5. **硬约束（constraint）仅限人类操作**：MCP 工具和 Dashboard 聊天的管理员循环都
    拒绝创建/修改/撤回 constraint。
-6. **敏感记忆默认不可见**：religion/politics/belief 类存储但默认不注入，仅在查询
-   主题明确相关时放开。
+6. **敏感记忆默认不可见**：religion/politics/belief 类存储但默认不注入，查询主题
+   明确相关时才放开。
 7. **记忆与代码分离**：`MEMBRAIN_HOME`（默认 `<repo>/memory`）是唯一数据位置，
    重新部署代码不触碰数据。
 
@@ -72,8 +73,8 @@
 | 包管理 | **uv + hatchling** | 快、锁定 `uv.lock`、sdist 打包清单严格控制隐私 |
 | 测试 | **pytest** | 212 个用例，全部离线（LLM 用 FakeLLMClient 脚本化） |
 
-**刻意不用的东西**：无 Web 框架（标准库 `http.server` 足够）、无 ORM（文件是事实来源）、
-无前端框架（避免构建链）、无向量数据库（SQLite + NumPy 覆盖当前规模）。
+也有刻意不用的东西：Web 框架（标准库 `http.server` 够用）、ORM（文件才是事实来源）、
+前端框架（不想引入构建链）、向量数据库（SQLite + NumPy 在当前规模下够了）。
 
 ---
 
@@ -131,11 +132,11 @@ membrain-app/
 
 | 层 | 位置 | 可丢弃？ | 内容 |
 |---|---|---|---|
-| **Canonical（事实层）** | `memory/facts/*.md`、`memory/episodes/*.jsonl`、`memory/profile.md`、`memory/ledger.jsonl` | **否——这就是产品** | 记忆文件、原始用户回合、生命周期账本 |
-| **Derived（派生层）** | `memory/.index/memory.db`、`memory/archive-index` | **是** | SQLite 全文/向量索引；`membrain reindex` 重建 |
-| **Access（访问层）** | MCP 服务、Dashboard、hooks | 是 | 无状态进程，随起随停 |
+| Canonical（事实层） | `memory/facts/*.md`、`memory/episodes/*.jsonl`、`memory/profile.md`、`memory/ledger.jsonl` | 否 | 记忆文件、原始用户回合、生命周期账本——这部分是产品本体 |
+| Derived（派生层） | `memory/.index/memory.db`、`memory/archive-index` | 是 | SQLite 全文/向量索引；`membrain reindex` 重建 |
+| Access（访问层） | MCP 服务、Dashboard、hooks | 是 | 无状态进程，随起随停 |
 
-删掉整个 `.index/` 目录什么都不会丢——这是"记忆属于用户"的技术保证。
+索引损坏或版本不兼容时，直接删掉 `.index/` 重跑 reindex 就行，一条记忆都不会少。
 
 ### 5.2 组件与数据流总览
 
@@ -184,32 +185,34 @@ flowchart LR
 
 1. 用户在某 Agent 里说话 → hooks（Claude Code/Codex）或 MCP `record_user_message`
    （relay 型 Agent）把**用户原话**写成 episode（`episodes/YYYY-MM-DD.jsonl`）。
-   注入块（`<system-reminder>`、`<task-notification>` 等）在 `text.py::clean_turn` 被剥掉；
-   被断开（隔离）的 Agent 在入口直接拒绝。
+   注入块（`<system-reminder>`、`<task-notification>` 等）在 `text.py::clean_turn`
+   被剥掉；已断开的 Agent 在入口直接拒绝。
 2. 后台启动 `membrain extract`（子进程，不阻塞 Agent）：LLM 读 pending episodes，
-   产出事实草稿（类型/主题/claim/**逐字引用**）→ `store.write_fact` 重算置信度 → 落盘 + ledger。
-3. 新事实 `sync_fact` 进索引，冲突扫描自动跑。
+   产出事实草稿（类型/主题/claim/**逐字引用**）→ `store.write_fact` 重算置信度 →
+   落盘 + ledger。
+3. 新事实 `sync_fact` 进索引，冲突扫描顺带跑完。
 
 **召回 → 注入（读路径）**
 
 1. Agent 调 `search_memory` / `find_user_evidence`，或 hooks 的 session-start 注入。
 2. `retrieval.py::recall`：混合检索（向量 + FTS，RRF 融合）→ 过滤
    （敏感/隔离 Agent/scope/type）→ top_k 选择 → **衰减注入**：30 天内新建或被召回过的
-   记忆给完整表述（含 hedged 证据），超 30 天未召回的只给一句话摘要（`aged` 标记）——
-   这是"逐渐遗忘"策略：证据不删，但不再占用 Agent 的注意力。
+   记忆给完整表述（含 hedged 证据）；超过 30 天没被召回的只给一句话摘要（`aged`
+   标记）。证据仍留在文件里，只是不再注入——这是有意的遗忘策略。
 3. 每次召回更新 `memory/.state/recall-tracker.json`（节流写盘）。
 
 **生命周期（改路径）**
 
 - 更正 = 写新事实（`supersedes` 指向旧条）+ ledger `supersede`；撤回 = ledger `retract`；
   冲突 = `contest`，解决 = `resolve(keep, drop)`。原始文件永远完整。
-- 入口有三处，校验规则一致：MCP 工具、Dashboard L2 详情按钮、Dashboard 聊天管理员循环
-  （JSON 动作协议，最多 5 轮，`record` 的 quote 必须是用户原话子串）。
+- 入口有三处，校验规则一致：MCP 工具、Dashboard L2 详情按钮、Dashboard 聊天管理员
+  循环（JSON 动作协议，最多 5 轮，`record` 的 quote 必须是用户原话子串）。
 
 **Agent 接入与隔离**
 
 - `agents.py::scan` 实时扫描（清单 + 关键词兜底 + Windows 卸载列表）；
-- 一键接入 = 直接编辑该 Agent 的 MCP 配置文件（先备份）；Claude Code/Codex 受保护，只给提示词；
+- 一键接入 = 直接编辑该 Agent 的 MCP 配置文件（先备份）；Claude Code/Codex 受保护，
+  只给提示词；
 - 断开 = 移除配置（能改的）+ 把 key 写进 `memory/state/disabled-agents.json`：
   其历史记忆从所有召回/列表中隐藏（**不删除**），新捕获被拒绝，重新接入自动解除。
 
@@ -252,8 +255,8 @@ uv run membrain stats        # 报告配置来源与统计，不打印任何密�
 uv run membrain doctor       # 体检：配置/索引/hooks 一并检查
 ```
 
-**接入你的 Agent**：Dashboard →「Agent 接入」→ 已安装的 Agent 一键接入（自动备份原配置），
-或「复制提示词」交给 Agent 自己配置。接入后重启该 Agent 生效。
+**接入你的 Agent**：Dashboard →「Agent 接入」→ 已安装的 Agent 一键接入（自动备份原
+配置），或「复制提示词」交给 Agent 自己配置。接入后重启该 Agent 生效。
 
 **常用运维**：
 
@@ -273,11 +276,11 @@ uv run pytest -q                   # 212 个离线用例（无网络、LLM 用 F
 uv run python scripts/calibrate.py # 召回质量回归（82 组中英文黄金样例 + 硬负例）
 ```
 
-- **召回回归基线**：结果对比 `state/recall-baseline.json`——通过率降 2%+、漏召回增加、
-  样例持续失败都会以非零退出并打印 REGRESSIONS。换 embedding 模型后务必跑一次
-  并 `--update-baseline`。
+- **召回回归基线**：结果对比 `state/recall-baseline.json`——通过率降 2% 以上、漏召回
+  增加、样例持续失败，都会以非零退出并打印 REGRESSIONS。换 embedding 模型后务必跑
+  一次并 `--update-baseline`。
 - **已知抖动**：`test_dashboard_rejects_cross_site_memory_writes` 在低负载机上偶发
-  （HTTP 线程时序），单跑必过；重跑即可，不要因此改动业务代码。
+  （HTTP 线程时序），单跑必过；重跑即可，别因此改业务代码。
 
 ---
 
@@ -301,34 +304,35 @@ uv run python scripts/calibrate.py # 召回质量回归（82 组中英文黄金�
 
 ## 9. Agent 体系详解
 
-membrain 本身不是 Agent——它是 **Agent 的大脑外挂**。"Agent" 在本项目里指任何
-接入了 membrain 的 AI 助手程序（Claude Code、Codex、Cursor、千问……），以及
-Dashboard 内置的**记忆管理员**。这一节说明它们如何被发现、接入、工作，以及能力边界。
+先说清楚一个容易误解的点：membrain 自己不是 Agent，它是给 Agent 用的外置记忆。
+本项目说的"Agent"指任何接入了 membrain 的 AI 助手程序（Claude Code、Codex、Cursor、
+千问……），另外还有一个 Dashboard 内置的**记忆管理员**。这一节讲它们怎么被发现、
+怎么接入、工作时受什么限制。
 
 ### 9.1 核心组成部分
 
 | 组件 | 文件 | 职责 |
 |---|---|---|
-| **发现与接入框架** | `agents.py` | 扫描本机已安装的 Agent（内置 13 个清单 + 关键词兜底 + Windows 卸载列表）；一键接入/断开（备份后写/删 MCP 配置）；隔离清单判定 |
-| **hooks 捕获通道** | `hooks.py` + `scripts/hook.py` | Claude Code / Codex 专用：把 Agent 的生命周期事件转成捕获与召回动作 |
-| **MCP 能力面** | `server.py` | 13 个 MCP 工具，是所有 relay 型 Agent 的唯一能力入口 |
-| **记忆管理员** | `dashboard.py::chat` | Dashboard 内置对话 Agent：JSON 动作循环，能自主多步操作记忆 |
-| **隔离机制** | `state/disabled-agents.json` + retrieval 过滤 | 断开接入后历史记忆隐藏、新捕获拒绝，重连即恢复 |
+| 发现与接入框架 | `agents.py` | 扫描本机已安装的 Agent（内置 13 个清单 + 关键词兜底 + Windows 卸载列表）；一键接入/断开（备份后写/删 MCP 配置）；隔离清单判定 |
+| hooks 捕获通道 | `hooks.py` + `scripts/hook.py` | Claude Code / Codex 专用：把 Agent 的生命周期事件转成捕获与召回动作 |
+| MCP 能力面 | `server.py` | 13 个 MCP 工具，是所有 relay 型 Agent 的唯一能力入口 |
+| 记忆管理员 | `dashboard.py::chat` | Dashboard 内置对话 Agent：JSON 动作循环，能自主多步操作记忆 |
+| 隔离机制 | `state/disabled-agents.json` + retrieval 过滤 | 断开接入后历史记忆隐藏、新捕获拒绝，重连即恢复 |
 
-四者的关系：**发现框架**决定"谁能进来"，**两条通道**（hooks / MCP）决定"怎么进来"，
-**能力面**决定"进来后能做什么"，**隔离机制**决定"出去了之后留下什么"。
+分工可以这样理解：agents.py 管准入，决定谁能接进来；hooks 和 MCP 是两条数据通道；
+server.py 的工具清单划定了 Agent 能做的操作；隔离清单管的是退出之后留下什么痕迹。
 
 ### 9.2 Agent 发现：三种识别手段
 
-`agents.py::scan` 每次调用都实时扫描，无缓存：
+`agents.py::scan` 每次调用都实时扫描，没有缓存：
 
-1. **内置清单（SPECS）**：13 个 Agent 的特征（PATH 目录、PATH 命令）。
-   桌面应用额外要求 Windows 卸载列表仍存在（`needs_uninstaller`）——防止"卸载后残留
-   数据目录被误判为已安装"（豆包案例）。
-2. **关键词兜底**：扫描卸载列表和 AppData 目录名，命中 KEYWORDS（claude/qwen/kimi/…）
-   但不在清单里的，以"其他发现（other:*）"呈现——新 Agent 至少能被报出名字。
-3. **不可编辑判定**：配置在应用 UI 里（Trae/Qoder/千问/DeepSeek Harness）的 Agent
-   标记为"需手动接入"，只提供提示词，绝不盲写配置。
+1. **内置清单（SPECS）**：13 个 Agent 的特征（目录路径、命令行）。桌面应用还要求
+   Windows 卸载列表里仍存在（`needs_uninstaller`）——豆包卸载后残留的 1.9G 数据目录
+   曾被误判为"已安装"，就是这么修掉的。
+2. **关键词兜底**：扫卸载列表和 AppData 目录名，命中 KEYWORDS（claude/qwen/kimi/…）
+   但不在清单里的，以"其他发现（other:*）"呈现。新 Agent 出来后至少能被报出名字。
+3. **不可编辑判定**：配置藏在应用 UI 里的（Trae/Qoder/千问/DeepSeek Harness）标记
+   为"需手动接入"，只给提示词，绝不盲写配置。
 
 ### 9.3 两种接入模式的工作机制
 
@@ -343,8 +347,9 @@ Dashboard 内置的**记忆管理员**。这一节说明它们如何被发现、
 ```
 
 - `scripts/hook.py` 是垫片：`setdefault(MEMBRAIN_HOME)` 后 re-exec 到项目 venv，
-  所以 Agent 配置里只需要一行命令。
-- 特点：**用户无感**，捕获全自动；代价是修改 Agent 的配置文件（受保护，只给提示词）。
+  Agent 配置里写一行命令就够。
+- 用户全程无感，捕获全自动；代价是要改 Agent 的配置文件（这类配置受保护，只提供
+  提示词）。
 
 **模式 B：MCP relay（其余所有 Agent）**
 
@@ -354,8 +359,8 @@ Agent 的 MCP 配置里加 membrain（stdio 子进程）→ 模型在对话中�
   需要回忆时调 search_memory
 ```
 
-- 特点：**零配置侵入**（不动 Agent 文件的 hooks），但依赖模型自觉调用工具；
-  规则文本（`agents.py::RELAY_RULE`）通过提示词/长期指令下发给 Agent。
+- 不动 Agent 的任何文件，但依赖模型自觉调用工具；规则文本（`agents.py::RELAY_RULE`）
+  通过提示词或长期指令下发。
 
 **模式 C：Dashboard 记忆管理员（内置）**
 
@@ -365,8 +370,8 @@ Agent 的 MCP 配置里加 membrain（stdio 子进程）→ 模型在对话中�
   服务端白名单执行（证据校验同 MCP 层）→ 结果回传 → 下一轮 → reply 结束
 ```
 
-- 特点：受控的 agentic loop——能自主多步（先 search 再 correct），但动作面被服务端
-  白名单限制，`record` 的 quote 必须逐字来自用户本轮消息。
+- 受控的 agentic loop：能自主多步操作（先 search 再 correct），但动作面被服务端
+  白名单收敛，`record` 的 quote 必须逐字来自用户本轮消息。
 
 ### 9.4 能力边界
 
@@ -394,9 +399,9 @@ Agent 的 MCP 配置里加 membrain（stdio 子进程）→ 模型在对话中�
 | 越过隔离 | 断开的 Agent 连自己的历史都看不到，重连才恢复 |
 | 直接访问文件系统 | 一切经过 MCP 工具的参数校验；没有"打开文件"类能力 |
 
-**管理员 Agent 的额外边界**：动作面被白名单收敛为 8 个动作；模型编造 memory_id、
-伪造 quote、JSON 不合规都会被拒绝并要求重试；连续 2 次无效输出即降级为固定提示，
-绝不带病写入。
+**管理员 Agent 的额外限制**：动作面被白名单收敛到 8 个动作；编造 memory_id、伪造
+quote、JSON 不合规都会被拒绝并要求重试；连续两次无效输出就降级为固定提示，绝不
+带病写入。
 
 ### 9.5 生命周期：接入 → 活跃 → 断开 → 恢复
 
@@ -412,23 +417,24 @@ stateDiagram-v2
 ```
 
 - **connected**：正常捕获与召回。
-- **isolated**：该 Agent 的历史记忆从所有召回/列表隐藏（数据不删）、新捕获被拒绝；
-  卡片显示"已隔离"。
-- 关键不变量：**隔离是查询层的窗帘，不是数据层的删除**——任何时候重连，记忆原样回来。
+- **isolated**：历史记忆从所有召回和列表里隐藏（数据不删），新捕获被拒绝；卡片
+  显示"已隔离"。
+- 要记住的一点：断开只是把记忆挡在查询结果外面，文件一个字节都没动。重新接入，
+  一切原样回来。
 
 ### 9.6 与其他部分的关系
 
-- **衰减注入（5.3）对所有 Agent 一致**：无论 hooks 还是 relay，召回注入的详细度都由
+- **衰减注入（5.3）对所有 Agent 一致**：不管 hooks 还是 relay，注入的详细程度都由
   服务端按"30 天使用窗口"决定——Agent 不需要、也不应该自己实现遗忘。
-- **置信度与冲突**是共享状态：一个 Agent 写入的记忆如果与另一个 Agent 的记忆矛盾，
-  冲突对会被标记并在健康中心/冲突页呈现给人类。
-- **隔离清单**由 Dashboard 维护，MCP 层与 hooks 层都读它——三个入口的边界一致。
+- **置信度与冲突是共享状态**：一个 Agent 写的记忆如果和另一个 Agent 写的矛盾，
+  冲突对会被标出来，在健康中心和冲突页呈现给人类裁决。
+- **隔离清单**由 Dashboard 维护，MCP 层与 hooks 层都读它——三个入口的边界保持一致。
 
 ---
 
 ## 10. 升级方向与注意事项
 
-### 9.1 路线图（按 PLAN.md 与当前进度）
+### 10.1 路线图（按 PLAN.md 与当前进度）
 
 | 方向 | 状态 | 说明 |
 |---|---|---|
@@ -439,21 +445,21 @@ stateDiagram-v2
 | 备份/恢复命令 | ⬜ | `membrain backup/restore/verify`：打包 + ledger 校验 + 索引重建 |
 | 外置 agents.json | ⬜ | Agent 识别清单外置成数据文件，社区可贡献 |
 
-### 9.2 改动红线（违反即破坏核心价值）
+### 10.2 改动红线（这几条动了就是事故）
 
-1. **不要原地修改 fact 文件的 claim/evidence**——一切变化走 ledger。衰减机制也刻意
-   做在注入层而不是删证据。
-2. **不要绕过证据校验**——任何新的写入口都必须校验 quote 是用户原话子串；
-   constraint 永远不给模型写。
-3. **不要把绝对路径/个人信息写进 src**——所有路径从 `Settings` 来；
-   提交前跑 `scripts/build_release.py` 的隐私扫描或等价 grep。
-4. **不要在 recall 热路径里做同步 LLM 调用**——intent/rerank 都是 fail-open 且可关；
+1. **不要原地修改 fact 文件的 claim/evidence**。一切变化走 ledger；衰减机制也刻意
+   做在注入层，而不是删证据。
+2. **不要绕过证据校验**。新加的写入口都必须校验 quote 是用户原话子串；constraint
+   永远不给模型写。
+3. **不要把绝对路径或个人信息写进 src**。所有路径从 `Settings` 来；提交前跑
+   `scripts/build_release.py` 的隐私扫描或等价 grep。
+4. **不要在 recall 热路径里做同步 LLM 调用**。intent/rerank 都是 fail-open 且可关；
    提取永远走后台子进程。
-5. **`web/` 保持无构建依赖**——引入前端框架前先论证为什么原生 JS 不够。
-6. **sdist 白名单**（pyproject `[tool.hatch.build.targets.sdist]`）——新增顶层目录时
-   记得同步，防止本机数据被打进发布包。
+5. **`web/` 保持无构建依赖**。想引入前端框架，先论证为什么原生 JS 不够。
+6. **维护 sdist 白名单**（pyproject `[tool.hatch.build.targets.sdist]`）。新增顶层
+   目录时记得同步，防止本机数据被打进发布包。
 
-### 9.3 排查速查
+### 10.3 排查速查
 
 | 症状 | 先看 |
 |---|---|
@@ -465,4 +471,5 @@ stateDiagram-v2
 
 ---
 
-*文档对应代码版本 `ba84a10`（2026-11-04）。发现文档与代码不符时，以代码为准并欢迎修文档。*
+*文档对应代码版本 `ba84a10`（2026-11-04）。发现文档和代码对不上时，以代码为准，
+欢迎顺手修文档。*
