@@ -192,7 +192,9 @@ class DashboardRuntime:
         return {**session_import.preview(self.service), "labels": archive.CATEGORY_LABELS,
                 "source_labels": session_import.SOURCE_LABELS}
 
-    def start_session_import(self, distill_facts: bool = False) -> tuple[dict[str, Any], bool]:
+    def start_session_import(self, distill_facts: bool = False, only: list[str] | None = None,
+                             skip: list[str] | None = None, unskip: list[str] | None = None,
+                             clear_skips: bool = False) -> tuple[dict[str, Any], bool]:
         with self._import_lock:
             if self._import_job.get("status") == "running":
                 if self._import_job.get("kind") != "sessions":
@@ -210,6 +212,7 @@ class DashboardRuntime:
             try:
                 report = session_import.apply_import(
                     self.service, self.llm_client, distill_facts=distill_facts,
+                    only=only, skip=skip, unskip=unskip, clear_skips=clear_skips,
                     progress=lambda p: update(progress=p))
                 update(status="done", report=report, progress=None)
             except Exception as exc:  # the page shows a recoverable message
@@ -1265,8 +1268,24 @@ def make_handler(runtime: DashboardRuntime):
                     job, started = runtime.start_import()
                     self._json(202 if started else 409, job)
                 elif path == "/api/import/sessions/start":
-                    job, started = runtime.start_session_import(bool(data.get("distill_facts")))
-                    self._json(202 if started else 409, job)
+                    def _keys(name: str) -> list[str] | None:
+                        value = data.get(name)
+                        if value is None:
+                            return None
+                        if not isinstance(value, list):
+                            raise ValueError(f"{name} 必须是数组。")
+                        return [str(v)[:80] for v in value]
+                    if data.get("skips_only"):
+                        session_import.update_skips(
+                            service, add=_keys("skip"), remove=_keys("unskip"),
+                            clear=bool(data.get("clear_skips")))
+                        self._json(200, {"ok": True, "skipped": len(session_import.load_skips(service))})
+                    else:
+                        job, started = runtime.start_session_import(
+                            bool(data.get("distill_facts")),
+                            only=_keys("only"), skip=_keys("skip"), unskip=_keys("unskip"),
+                            clear_skips=bool(data.get("clear_skips")))
+                        self._json(202 if started else 409, job)
                 elif path == "/api/import/undo":
                     self._json(200, openviking_import.undo_batch(service, str(data.get("batch", ""))))
                 elif path.startswith("/api/agents/") and path.endswith("/connect"):

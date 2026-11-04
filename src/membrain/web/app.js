@@ -1006,26 +1006,80 @@ function categoryChips(counts) {
 function renderSessionImport(prev) {
   const card = $('#session-import-card');
   if (!card) return;
-  const rows = (prev.sources || []).map((s) => `<div class="batch-row"><span>${escapeHtml(s.label || s.source)}　发现 ${s.found}　已导入 ${s.already}　噪声跳过 ${s.noise || 0}</span></div>`).join('');
-  const actionable = (prev.new || 0) > 0;
-  const actionLabel = !(prev.total > 0) ? '未发现可导入会话' : actionable ? '一键导入全部会话' : '已全部导入';
-  card.innerHTML = `<h3>Agent 会话导入 · LLM 清洗提炼</h3>
-    <p class="import-note">自动发现本机 Agent 的历史会话（源只读），一键导入后由 LLM 识别分类、生成标题与 L0 摘要；纯问候/空会话/系统回执等噪声直接丢弃。落库后按 Agent→类别出现在资料库。</p>
-    <div class="import-actions"><button class="button button-dark" id="session-import-start" type="button" ${actionable ? '' : 'disabled'}>${actionLabel}</button>
-    <label class="check-inline"><input type="checkbox" id="session-import-distill"> 同时提炼为短记忆 <span class="import-note">（默认关闭：历史会话大多为闲聊和临时上下文，勾选后 LLM 才会把其中值得长期保存的信息写成记忆条目；不勾则只进资料库，不影响记忆库）</span></label>
-    <span class="import-note" id="session-import-status"></span></div>
-    ${rows}`;
-  $('#session-import-start')?.addEventListener('click', startSessionImport);
+  const sessions = (prev.sessions || []).filter((s) => s.status !== 'noise');
+  const bySource = new Map();
+  sessions.forEach((s) => {
+    if (!bySource.has(s.source)) bySource.set(s.source, []);
+    bySource.get(s.source).push(s);
+  });
+  const groupsHtml = [...bySource.entries()].map(([source, rows]) => {
+    const selectable = rows.filter((s) => s.status !== 'already');
+    const rowsHtml = rows.slice(0, 80).map((s) => {
+      const statusChip = s.status === 'already'
+        ? '<span class="agent-chip is-ok">已导入</span>'
+        : s.status === 'skipped'
+          ? '<span class="agent-chip is-off">已忽略</span>' : '';
+      const checkbox = s.status === 'new' || s.status === 'skipped'
+        ? `<input type="checkbox" class="session-check" data-session-key="${escapeHtml(s.key)}" ${s.status === 'new' ? 'checked' : ''}>`
+        : '';
+      return `<label class="session-row"><span class="session-row-main">${checkbox}<span class="session-title">${escapeHtml(s.title || '（无标题）')}</span></span>
+        <span class="session-row-meta">${escapeHtml(s.date)} · ${s.turns} 轮 ${statusChip}</span></label>`;
+    }).join('');
+    return `<div class="session-group">
+      <div class="session-group-head"><label class="check-inline"><input type="checkbox" class="session-group-check" data-session-group="${escapeHtml(source)}" ${selectable.some((s) => s.status === 'new') ? 'checked' : ''}> ${escapeHtml(rows[0].label || source)}</label>
+      <span class="import-note">${rows.length} 个会话${rows.length > 80 ? '（只显示前 80）' : ''}</span></div>
+      <div class="session-group-body">${rowsHtml}</div></div>`;
+  }).join('');
+  const actionable = (prev.new || 0) > 0 || sessions.some((s) => s.status === 'skipped');
+  card.innerHTML = `<h3>Agent 会话导入 · LLM 清洗筛选</h3>
+    <p class="import-note">自动发现本机 Agent 历史会话（源只读）。勾选要导入的，由 LLM 识别分类、生成标题与 L0 摘要后落库资料库；<strong>不勾选即不导入</strong>；「忽略选中」后永久不再提示（可恢复）。纯问候/空会话/系统回执等噪声自动丢弃。</p>
+    <p class="import-note" id="watcher-note">新对话由后台自动捕获并提炼，无需重复导入。</p>
+    <div class="import-actions">
+      <button class="button button-dark" id="session-import-start" type="button" ${actionable ? '' : 'disabled'}>导入选中</button>
+      <button class="button button-outline" id="session-import-skip" type="button">忽略选中</button>
+      <button class="button button-outline" id="session-import-unskip" type="button">恢复全部忽略</button>
+      <label class="check-inline"><input type="checkbox" id="session-import-distill"> 同时提炼为短记忆 <span class="import-note">（默认关闭：历史会话大多为闲聊和临时上下文，勾选后 LLM 才会把值得长期保存的信息写成记忆条目；不勾则只进资料库）</span></label>
+      <span class="import-note" id="session-import-status"></span>
+    </div>
+    ${groupsHtml || '<div class="side-empty">没有发现可导入的历史会话。</div>'}`;
+  $('#session-import-start')?.addEventListener('click', () => startSessionImport('import'));
+  $('#session-import-skip')?.addEventListener('click', () => startSessionImport('skip'));
+  $('#session-import-unskip')?.addEventListener('click', () => startSessionImport('unskip'));
+  card.querySelectorAll('[data-session-group]').forEach((box) => box.addEventListener('change', () => {
+    const group = box.closest('.session-group');
+    if (!group) return;
+    group.querySelectorAll('.session-check').forEach((one) => { one.checked = box.checked; });
+  }));
+  fetchJson('/api/watcher').then((w) => {
+    const note = $('#watcher-note');
+    if (note && w) {
+      const last = w.last_run ? `，最近一次捕获 ${w.last_run.captured} 条` : '';
+      note.textContent = `新对话由后台自动捕获并提炼（捕获服务${w.enabled ? '运行中' : '已关闭'}${last}），无需重复导入。`;
+    }
+  }).catch(() => {});
 }
 
-async function startSessionImport() {
+async function startSessionImport(mode) {
   const button = $('#session-import-start');
   if (button) button.disabled = true;
   try {
-    await fetchJson('/api/import/sessions/start', {
-      method: 'POST',
-      body: JSON.stringify({ distill_facts: Boolean($('#session-import-distill')?.checked) }),
-    });
+    const checked = [...document.querySelectorAll('.session-check:checked')].map((el) => el.dataset.sessionKey);
+    if (mode === 'unskip') {
+      await fetchJson('/api/import/sessions/start', { method: 'POST', body: JSON.stringify({ skips_only: true, clear_skips: true }) });
+      await loadImport();
+      notify('已恢复全部忽略的会话');
+      return;
+    }
+    if (mode === 'import' && !checked.length) { notify('请先勾选要导入的会话。', true); return; }
+    if (mode === 'skip' && !checked.length) { notify('请先勾选要忽略的会话。', true); return; }
+    if (mode === 'skip') {
+      await fetchJson('/api/import/sessions/start', { method: 'POST', body: JSON.stringify({ skips_only: true, skip: checked }) });
+      notify(`已忽略 ${checked.length} 个会话`);
+      await loadImport();
+      return;
+    }
+    const body = { distill_facts: Boolean($('#session-import-distill')?.checked), only: checked };
+    await fetchJson('/api/import/sessions/start', { method: 'POST', body: JSON.stringify(body) });
     pollImport('sessions');
   } catch (error) {
     notify(error.message, true);

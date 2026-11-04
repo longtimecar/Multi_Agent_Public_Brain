@@ -11,6 +11,7 @@ rule-based fields and can be reclassified later.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -612,6 +613,45 @@ def _existing_id(svc: Any, rs: RawSession, chash: str) -> str | None:
     return _existing_entry(svc, rs.source, rs.scope, rs.origin, chash)
 
 
+def _session_key(rs: RawSession) -> str:
+    """Stable per-session key for selection, independent of file content."""
+    return hashlib.sha256(f"{rs.source}|{rs.scope}|{rs.origin}".encode("utf-8")).hexdigest()[:16]
+
+
+SKIPS_FILE = ".state/import-skips.json"
+
+
+def _skips_path(svc: Any) -> Path:
+    path = Path(svc.settings.home) / SKIPS_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def load_skips(svc: Any) -> set[str]:
+    path = _skips_path(svc)
+    if not path.exists():
+        return set()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return {str(x) for x in data if isinstance(x, str)}
+    except (OSError, ValueError):
+        return set()
+
+
+def _save_skips(svc: Any, keys: set[str]) -> None:
+    _atomic_write(_skips_path(svc), json.dumps(sorted(keys), ensure_ascii=False, indent=2))
+
+
+def update_skips(svc: Any, *, add: list[str] | None = None, remove: list[str] | None = None,
+                 clear: bool = False) -> set[str]:
+    """Persist 'do not import' selections so they stop appearing as new."""
+    keys: set[str] = set() if clear else load_skips(svc)
+    keys.update(str(k) for k in (add or []))
+    keys.difference_update(str(k) for k in (remove or []))
+    _save_skips(svc, keys)
+    return keys
+
+
 _TITLE_ARTIFACT = re.compile(r"<command-(?:name|message|args)>|local-command-stdout|No response requested", re.I)
 
 
@@ -737,27 +777,49 @@ def source_label(key: str) -> str:
 
 
 def preview(svc: Any, sources: list[str] | None = None) -> dict[str, Any]:
-    """What an import would do. Writes nothing."""
+    """What an import would do. Writes nothing.
+
+    Per-session rows let the owner pick what to import and what to ignore;
+    ignored keys persist in .state/import-skips.json until restored.
+    """
     rows: dict[str, dict[str, int]] = {}
+    skips = load_skips(svc)
     sessions = collect(sources)
+    detail: list[dict[str, Any]] = []
     for rs in sessions:
         row = rows.setdefault(rs.source, {"source": rs.source, "label": source_label(rs.source),
-                                          "found": 0, "already": 0, "noise": 0})
+                                          "found": 0, "already": 0, "noise": 0, "skipped": 0})
         row["found"] += 1
+        key = _session_key(rs)
         prepared = _prepare(rs)
+        title = rs.title or _title(rs.source, rs.origin, rs.turns)
+        date = rs.date
+        turns = len(rs.turns or [])
         if prepared is None:
             row["noise"] += 1
-            continue
-        _, eid, _, chash = prepared
-        if svc.archive.files.exists(eid) or _existing_entry(svc, rs.source, rs.scope, rs.origin, chash):
-            row["already"] += 1
+            status = "noise"
+        else:
+            _, eid, _, chash = prepared
+            if svc.archive.files.exists(eid) or _existing_entry(svc, rs.source, rs.scope, rs.origin, chash):
+                row["already"] += 1
+                status = "already"
+            elif key in skips:
+                row["skipped"] += 1
+                status = "skipped"
+            else:
+                status = "new"
+        detail.append({"key": key, "source": rs.source, "label": source_label(rs.source),
+                       "title": title[:80], "date": date, "turns": turns, "status": status})
     listed = [rows[name] for name in SOURCES if name in rows]
     return {
         "sources": listed,
+        "sessions": detail[:500],
+        "sessions_truncated": len(detail) > 500,
         "total": sum(r["found"] for r in listed),
         "already_imported": sum(r["already"] for r in listed),
-        "new": sum(r["found"] - r["already"] - r["noise"] for r in listed),
+        "new": sum(r["found"] - r["already"] - r["noise"] - r.get("skipped", 0) for r in listed),
         "noise": sum(r["noise"] for r in listed),
+        "skipped": sum(r.get("skipped", 0) for r in listed),
     }
 
 
@@ -775,14 +837,31 @@ def _distill_entry(llm: Any, entry: ArchiveEntry) -> tuple[list[dict[str, str]],
 
 
 def apply_import(svc: Any, llm: Any, sources: list[str] | None = None,
-                 distill_facts: bool = False, progress: Any = None) -> dict[str, Any]:
+                 distill_facts: bool = False, progress: Any = None,
+                 only: list[str] | None = None, skip: list[str] | None = None,
+                 unskip: list[str] | None = None, clear_skips: bool = False) -> dict[str, Any]:
+    """Import sessions into the archive.
+
+    only:  import just these session keys (None = everything eligible).
+    skip / unskip / clear_skips: manage the persistent ignore list first;
+    ignored sessions are neither imported nor offered again until restored.
+    """
     from datetime import date as _date
 
+    if skip or unskip or clear_skips:
+        update_skips(svc, add=skip, remove=unskip, clear=clear_skips)
+    skips = load_skips(svc)
+    only_set = set(only) if only is not None else None
+    if only_set:
+        # Picking a previously ignored session means it is wanted after all.
+        update_skips(svc, remove=list(only_set))
+        skips = load_skips(svc)
     batch = "b_" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
     cache = _load_cache(svc)
     sessions = collect(sources)
     report: dict[str, Any] = {"batch": batch, "total": len(sessions), "archived_new": 0, "archive_existing": 0,
                               "noise_skipped": 0, "facts_added": 0, "facts_duplicate": 0, "rejected": 0,
+                              "not_selected": 0, "skipped": 0,
                               "errors": []}
     archive_ids: list[str] = []
     entries: list[ArchiveEntry] = []
@@ -790,6 +869,13 @@ def apply_import(svc: Any, llm: Any, sources: list[str] | None = None,
         if progress:
             progress({"stage": "cleaning", "done": n - 1, "total": len(sessions)})
         try:
+            key = _session_key(rs)
+            if only_set is not None and key not in only_set:
+                report["not_selected"] += 1
+                continue
+            if key in skips and (only_set is None or key not in only_set):
+                report["skipped"] += 1
+                continue
             prepared = _prepare(rs)
             if prepared is None:
                 report["noise_skipped"] += 1

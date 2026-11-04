@@ -193,3 +193,87 @@ def test_session_import_opencode_adapter(tmp_path, monkeypatch):
                                                   "title": "重构校验函数", "abstract": "重复校验抽成公共函数"}]))
     assert report["archived_new"] == 1
     assert svc.archive.browse("opencode")["items"][0]["title"] == "重构校验函数"
+
+
+def test_selective_import_and_persistent_skips(tmp_path, monkeypatch):
+    svc, agent_home = _setup(tmp_path, monkeypatch)
+    _claude_file(agent_home, "keep.jsonl", GOOD_TURNS)
+    _claude_file(agent_home, "drop.jsonl", [("user", "换个话题，帮我规划周末的行程安排并给出三个备选方案。"),
+                                            ("assistant", "好的，以下是三个备选方案……（内容足够长不是噪声）" + "详"*20)])
+    preview = si.preview(svc)
+    sessions = [s for s in preview["sessions"] if s["status"] == "new"]
+    assert len(sessions) == 2
+    keep_key = next(s["key"] for s in sessions if "超时" in s["title"] or s["turns"] == 2)
+    drop_key = next(s["key"] for s in sessions if s["key"] != keep_key)
+
+    llm = FakeLLMClient([{"noise": False, "category": "life", "title": "周末行程", "abstract": "周末行程三个方案"},
+                         {"noise": False, "category": "code", "title": "调整超时配置", "abstract": "超时改为 30 秒"}])
+    # 只导入勾选的一条
+    report = si.apply_import(svc, llm, only=[keep_key])
+    assert report["archived_new"] == 1 and report["not_selected"] == 1
+
+    # 忽略另一条：持久化后 preview 不再给 new
+    si.update_skips(svc, add=[drop_key])
+    preview2 = si.preview(svc)
+    statuses = {s["key"]: s["status"] for s in preview2["sessions"]}
+    assert statuses[drop_key] == "skipped"
+    assert preview2["new"] == 0 and preview2["skipped"] == 1
+
+    # 显式选中被忽略的会话 = 恢复并导入
+    llm2 = FakeLLMClient([{"noise": False, "category": "life", "title": "周末行程", "abstract": "周末行程三个方案"}])
+    report2 = si.apply_import(svc, llm2, only=[drop_key])
+    assert report2["archived_new"] == 1
+    assert drop_key not in si.load_skips(svc)
+
+
+def test_clear_skips_restores_everything(tmp_path, monkeypatch):
+    svc, agent_home = _setup(tmp_path, monkeypatch)
+    _claude_file(agent_home, "keep.jsonl", GOOD_TURNS)
+    preview = si.preview(svc)
+    key = preview["sessions"][0]["key"]
+    si.update_skips(svc, add=[key])
+    assert si.load_skips(svc) == {key}
+    si.update_skips(svc, clear=True)
+    assert si.load_skips(svc) == set()
+
+
+def test_selective_import_and_persistent_skips(tmp_path, monkeypatch):
+    svc, agent_home = _setup(tmp_path, monkeypatch)
+    _claude_file(agent_home, "keep.jsonl", GOOD_TURNS)
+    _claude_file(agent_home, "drop.jsonl", [("user", "换个话题，帮我规划周末的行程安排并给出三个备选方案。"),
+                                            ("assistant", "好的，以下是三个备选方案……（内容足够长不是噪声）" + "详"*20)])
+    preview = si.preview(svc)
+    sessions = [s for s in preview["sessions"] if s["status"] == "new"]
+    assert len(sessions) == 2
+    keep_key = next(s["key"] for s in sessions if "超时" in s["title"] or s["turns"] == 2)
+    drop_key = next(s["key"] for s in sessions if s["key"] != keep_key)
+
+    llm = FakeLLMClient([{"noise": False, "category": "life", "title": "周末行程", "abstract": "周末行程三个方案"},
+                         {"noise": False, "category": "code", "title": "调整超时配置", "abstract": "超时改为 30 秒"}])
+    # 只导入勾选的一条
+    report = si.apply_import(svc, llm, only=[keep_key])
+    assert report["archived_new"] == 1 and report["not_selected"] == 1
+
+    # 忽略另一条：持久化后 preview 不再给 new
+    si.update_skips(svc, add=[drop_key])
+    preview2 = si.preview(svc)
+    statuses = {s["key"]: s["status"] for s in preview2["sessions"]}
+    assert statuses[drop_key] == "skipped"
+    assert preview2["new"] == 0 and preview2["skipped"] == 1
+
+    # 显式选中被忽略的会话 = 恢复并导入
+    llm2 = FakeLLMClient([{"noise": False, "category": "life", "title": "周末行程", "abstract": "周末行程三个方案"}])
+    report2 = si.apply_import(svc, llm2, only=[drop_key])
+    assert report2["archived_new"] == 1
+    assert drop_key not in si.load_skips(svc)
+
+
+def test_clear_skips_restores_everything(tmp_path, monkeypatch):
+    svc, agent_home = _setup(tmp_path, monkeypatch)
+    _claude_file(agent_home, "keep.jsonl", GOOD_TURNS)
+    preview = si.preview(svc)
+    key = preview["sessions"][0]["key"]
+    si.update_skips(svc, add=[key])
+    assert si.load_skips(svc) == {key}
+    si.update_skips(svc, clear=True)
+    assert si.load_skips(svc) == set()
