@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, unquote, urlparse, urlsplit
 
 from pydantic import ValidationError
 
-from . import agents, archive, openviking_import, session_import
+from . import agents, archive, health, openviking_import, session_import
 from .config import DEFAULT_ENV_FILE
 from .embeddings import Embedder, EmbeddingError
 from .models import Episode, Evidence, FactType, Status
@@ -588,6 +588,65 @@ class DashboardRuntime:
         return {"ok": True, "changed": changed, "changed_count": len(changed),
                 "note": "记忆目录等结构性配置不参与热加载，仍需重启。"}
 
+    def health_report(self) -> dict[str, Any]:
+        service = self.service
+        scanner = health.HealthScanner(
+            service, lambda fact: service.retriever.recall_days_since_use(fact))
+        findings = scanner.scan()
+        dismissed = health.DismissalStore(
+            service.settings.home / "state" / "health-dismissed.json").load()
+        visible = [finding for finding in findings if finding.fingerprint not in dismissed]
+        visible.sort(key=lambda finding: (-finding.severity, finding.kind))
+        score = max(0, 100 - sum(finding.severity * 3 for finding in visible))
+        kinds: dict[str, int] = {}
+        for finding in visible:
+            kinds[finding.kind] = kinds.get(finding.kind, 0) + 1
+        return {"score": score, "findings": [finding.as_dict() for finding in visible],
+                "counts": kinds, "dismissed": len(findings) - len(visible),
+                "scanned_at": datetime.now(timezone.utc).isoformat()}
+
+    def health_action(self, data: dict[str, Any]) -> dict[str, Any]:
+        action = str(data.get("action", "")).strip().lower()
+        fingerprint = str(data.get("fingerprint", "")).strip()
+        if action == "dismiss":
+            if not fingerprint:
+                raise ValueError("dismiss 需要 finding 的 fingerprint。")
+            store_path = self.service.settings.home / "state" / "health-dismissed.json"
+            dismissed = health.DismissalStore(store_path).load()
+            dismissed.add(fingerprint)
+            health.DismissalStore(store_path).save(dismissed)
+            return {"ok": True, "action": "dismiss"}
+        if action not in {"supersede", "retract"}:
+            raise ValueError("action 只支持 dismiss / supersede / retract。")
+        keep_id = str(data.get("keep_id", "")).strip()
+        drop_id = str(data.get("drop_id", "")).strip()
+        now = datetime.now(timezone.utc)
+        if action == "supersede":
+            if not keep_id or not drop_id or keep_id == drop_id:
+                raise ValueError("合并替代需要 keep_id 和 drop_id 两条不同记忆。")
+            keep = self.service.store.get_fact(keep_id)
+            drop = self.service.store.get_fact(drop_id)
+            replacement = self.service.store.draft_fact(
+                type=keep.type, subject=keep.subject, claim=keep.claim,
+                evidence=[*keep.evidence, *drop.evidence],
+                source_agent="membrain-dashboard", source_session="health-center",
+                supersedes=drop.id,
+            )
+            saved = self.service.store.write_fact(replacement)
+            self.service.store.supersede(drop.id, saved.id, when=now.date())
+            self.service.retriever.sync_fact(saved)
+            self.service.retriever.sync_fact(self.service.store.get_fact(drop.id))
+            return {"ok": True, "action": "supersede", "kept": saved.id, "dropped": drop.id,
+                    "note": "两条证据已合并保留在新记忆中。"}
+        if not drop_id:
+            raise ValueError("撤回需要 drop_id。")
+        target = self.service.store.get_fact(drop_id)
+        if target.type == FactType.CONSTRAINT:
+            raise ValueError("硬约束只能由用户在记忆详情中手动处理。")
+        self.service.store.retract(drop_id, f"健康中心撤回：{fingerprint or 'owner confirmed'}")
+        self.service.retriever.sync_fact(self.service.store.get_fact(drop_id))
+        return {"ok": True, "action": "retract", "dropped": drop_id}
+
     def test_model(self) -> dict[str, Any]:
         if not self.service.settings.llm_enabled:
             raise LLMError("LLM 尚未配置。请在 .env 中设置模型地址和模型名。")
@@ -914,6 +973,8 @@ def make_handler(runtime: DashboardRuntime):
                     for item in items:
                         item["isolated"] = item.get("key") in disabled
                     self._json(200, {"agents": items})
+                elif parsed.path == "/api/health":
+                    self._json(200, runtime.health_report())
                 elif parsed.path == "/api/import/preview":
                     self._json(200, runtime.import_preview())
                 elif parsed.path == "/api/import/sessions/preview":
@@ -1015,6 +1076,8 @@ def make_handler(runtime: DashboardRuntime):
                     self._json(200, runtime.configure_model(data))
                 elif path == "/api/config/reload":
                     self._json(200, runtime.reload_config())
+                elif path == "/api/health/action":
+                    self._json(200, runtime.health_action(data))
                 elif path == "/api/model/embedding/test":
                     self._json(200, runtime.test_embedding())
                 elif path == "/api/model/embedding/config":

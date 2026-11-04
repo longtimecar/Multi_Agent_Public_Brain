@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -526,4 +526,76 @@ def test_disabled_agent_captures_are_refused(tmp_path):
     service.enable_agent("codex")
     assert record_prompt(service, "codex-session", "codex", "user typed this") is True
     assert list(service.store.iter_episodes())
+    service.index.close()
+
+
+def test_health_scan_reports_duplicates_noise_and_forget(tmp_path):
+    from test_core import make_settings
+
+    service = MemoryService(make_settings(tmp_path))
+    runtime = DashboardRuntime(service, llm_client=FakeLLMClient([]), auto_extract_chat=False)
+
+    def write_old(agent, claim, ftype, days):
+        fact = service.store.draft_fact(
+            type=ftype, subject="drink", claim=claim,
+            evidence=[Evidence(episode=f"ep_{agent}_{days}", quote=quote_of(claim),
+                               date=datetime.now(timezone.utc).date(), origin="stated")],
+            source_agent=agent, source_session=f"{agent}-s",
+        )
+        # age the fact by rewriting created_at through a direct store write
+        stored = service.store.write_fact(fact)
+        stored = stored.model_copy(update={"created_at": datetime.now(timezone.utc) - timedelta(days=days)})
+        path = service.store.fact_path(stored.id)
+        path.write_text(service.store.render(stored), encoding="utf-8")
+        service.retriever.sync_fact(service.store.get_fact(stored.id))
+        return stored
+
+    def quote_of(claim):
+        return f"用户说过：{claim}"
+
+    a = write_old("cursor", "Cursor drinks oolong tea", FactType.FACT, 120)
+    b = write_old("workbuddy", "Cursor drinks oolong tea!", FactType.FACT, 100)
+    noisy = write_old("codex", "maybe临时噪声x", FactType.FACT, 120)
+    write_old("workbuddy", "Prefers oolong tea", FactType.PREFERENCE, 400)
+
+    report = runtime.health_report()
+    kinds = {finding["kind"] for finding in report["findings"]}
+    assert "duplicate" in kinds, report["findings"]
+    assert report["score"] < 100
+    duplicate = next(f for f in report["findings"] if f["kind"] == "duplicate")
+    assert a.id in duplicate["fact_ids"] and b.id in duplicate["fact_ids"]
+    service.index.close()
+
+
+def test_health_supersede_merges_evidence_and_retracts(tmp_path):
+    from test_core import make_settings
+
+    service = MemoryService(make_settings(tmp_path))
+    runtime = DashboardRuntime(service, llm_client=FakeLLMClient([]), auto_extract_chat=False)
+
+    def write_from(agent, claim):
+        fact = service.store.draft_fact(
+            type=FactType.FACT, subject="tool", claim=claim,
+            evidence=[Evidence(episode=f"ep_{agent}", quote=claim,
+                               date=datetime.now(timezone.utc).date(), origin="stated")],
+            source_agent=agent, source_session=f"{agent}-s",
+        )
+        return service.store.write_fact(fact)
+
+    a = write_from("cursor", "Uses Cursor daily")
+    b = write_from("codex", "Uses Cursor every day")
+    result = runtime.health_action({
+        "action": "supersede", "keep_id": a.id, "drop_id": b.id,
+        "fingerprint": "test-dup",
+    })
+    assert result["ok"] and result["action"] == "supersede"
+    merged = service.store.get_fact(result["kept"])
+    assert len(merged.evidence) == 2
+    assert service.store.get_fact(b.id).status.value == "superseded"
+
+    retracted = runtime.health_action({
+        "action": "retract", "drop_id": a.id, "fingerprint": "test-retract",
+    })
+    assert retracted["ok"]
+    assert service.store.get_fact(a.id).status.value == "retracted"
     service.index.close()

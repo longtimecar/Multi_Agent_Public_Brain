@@ -314,6 +314,16 @@ dialog::backdrop { background: rgba(19, 38, 39, .38); }
 .agent-card { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; background: #fff; }
 .agent-card.is-off { opacity: .55; }
 .agent-card.is-isolated { border-color: #e4b8a8; background: #fdf7f4; }
+.health-panel .overview-stat { display: grid; place-items: center; min-width: 72px; padding: 8px 14px; border-radius: var(--radius); background: var(--teal-soft); color: var(--teal); font-size: 18px; font-weight: 700; }
+.health-body { padding: 0 16px 18px; display: grid; gap: 12px; }
+.health-summary { color: var(--ink-soft); font-size: 12.5px; }
+.health-findings { display: grid; gap: 10px; }
+.health-finding { border: 1px solid var(--line); border-radius: var(--radius); padding: 13px 15px; background: #fff; display: grid; gap: 7px; }
+.health-finding-head { display: flex; justify-content: space-between; align-items: center; }
+.health-fp { color: #a0aaa4; font-size: 11px; }
+.health-summary-line { margin: 0; font-size: 13px; color: var(--ink); line-height: 1.55; }
+.health-suggestion { margin: 0; font-size: 12px; color: var(--ink-soft); }
+.health-finding .agent-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .agent-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .agent-note { margin: 0; color: var(--ink-soft); font-size: 12px; line-height: 1.5; }
 .agent-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }

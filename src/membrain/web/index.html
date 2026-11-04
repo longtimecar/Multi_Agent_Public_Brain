@@ -41,6 +41,9 @@
           <button class="nav-item" type="button" data-view="agents" aria-label="Agent 接入">
             <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 9l-4 3 4 3M16 9l4 3-4 3M13 6l-2 12"/></svg></span><span>Agent 接入</span>
           </button>
+          <button class="nav-item" type="button" data-view="health" aria-label="记忆健康">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 12h4l2-5 3 10 2.5-7 1.5 2h5"/></svg></span><span>记忆健康</span>
+          </button>
           <button class="nav-item" type="button" data-view="model" aria-label="模型连接">
             <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3.5 19 7v10l-7 3.5L5 17V7l7-3.5Z"/><path d="m5 7 7 3.5L19 7M12 10.5V20.5"/></svg></span><span>模型连接</span>
           </button>
@@ -310,6 +313,19 @@
               </div>
             </div>
             <div class="agent-grid" id="agent-grid"><div class="side-empty">正在扫描本机…</div></div>
+          </section>
+        </div>
+
+        <div class="view" data-view-panel="health">
+          <section class="panel health-panel" id="health">
+            <div class="panel-header">
+              <div><h2>记忆健康</h2><p class="panel-subtitle">自动扫描重复、冲突、噪声与遗忘候选。只报告不擅改，处理由你决定。</p></div>
+              <div class="overview-stat" id="health-score">—</div>
+            </div>
+            <div class="health-body">
+              <div class="health-summary" id="health-summary">正在扫描…</div>
+              <div class="health-findings" id="health-findings"></div>
+            </div>
           </section>
         </div>
 

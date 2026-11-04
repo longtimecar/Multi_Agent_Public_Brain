@@ -15,8 +15,11 @@ default inject unless topic-relevant).
 
 from __future__ import annotations
 
+import json
+import threading
+import time
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timezone
 import re
 
 from .budget import estimate_tokens
@@ -85,6 +88,68 @@ class Retriever:
         # Agents the owner disconnected from. Their memories stay on disk but
         # leave every recall path until the agent is connected again.
         self.disabled_agents: set[str] = set()
+        # Recall tracker: which facts were surfaced when. Drives the decay
+        # policy — details fade from injection after a month without use.
+        self._tracker: dict[str, dict] = {}
+        self._tracker_dirty = False
+        self._tracker_last_flush = 0.0
+        self._tracker_lock = threading.Lock()
+        self._load_tracker()
+
+    # ------------------------------------------------------- recall tracking
+
+    @property
+    def tracker_path(self):
+        return self.settings.home / ".state" / "recall-tracker.json"
+
+    def _load_tracker(self) -> None:
+        try:
+            data = json.loads(self.tracker_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                self._tracker = {k: v for k, v in data.items() if isinstance(v, dict)}
+        except (OSError, ValueError):
+            self._tracker = {}
+
+    def flush_tracker(self, force: bool = False) -> None:
+        """Persist recall counters. Throttled: at most once a minute unless forced."""
+        with self._tracker_lock:
+            if not self._tracker_dirty:
+                return
+            now = time.monotonic()
+            if not force and now - self._tracker_last_flush < 60:
+                return
+            path = self.tracker_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                path.write_text(json.dumps(self._tracker, ensure_ascii=False), encoding="utf-8")
+                self._tracker_dirty = False
+                self._tracker_last_flush = now
+            except OSError:
+                pass  # losing a flush only delays the decay clock, never corrupts data
+
+    def _track_recalled(self, fact_ids: list[str]) -> None:
+        now_iso = datetime.now(timezone.utc).date().isoformat()
+        with self._tracker_lock:
+            for fact_id in fact_ids:
+                entry = self._tracker.setdefault(fact_id, {"count": 0})
+                entry["last_recalled"] = now_iso
+                entry["count"] = int(entry.get("count", 0)) + 1
+            self._tracker_dirty = True
+        self.flush_tracker()
+
+    def recall_days_since_use(self, fact: Fact) -> int:
+        """Days since the fact entered the store or was last surfaced, whichever is newer."""
+        today = date.today()
+        created = fact.created_at.date() if fact.created_at else fact.valid_from
+        entry = self._tracker.get(fact.id) or {}
+        last = entry.get("last_recalled")
+        since_use = (today - date.fromisoformat(last)).days if last else None
+        age = max(0, (today - created).days)
+        return min(age, since_use) if since_use is not None else age
+
+    def fact_is_stale(self, fact: Fact, window: int = 30) -> bool:
+        """True when neither fresh nor surfaced inside the decay window."""
+        return self.recall_days_since_use(fact) > window
 
     # ------------------------------------------------------------ ingestion
 
@@ -448,7 +513,12 @@ class Retriever:
             if len(chosen) >= top_k:
                 break
             fact = hit.fact
-            if level == 0:
+            stale = self.fact_is_stale(fact)
+            if level == 0 or stale:
+                # Decay: facts nobody surfaced for a month collapse to their
+                # one-line gist. The claim and type stay; the supporting
+                # quote stops being injected (and re-reads stay possible via
+                # detail views). This is the "gradual forgetting" policy.
                 claimed = fact.abstract or make_abstract(fact.claim)
             else:
                 claimed = render_hedged(fact)
@@ -457,6 +527,8 @@ class Retriever:
                 tags += f", {fact.uri}"
             if fact.sensitive:
                 tags += ", sensitive"
+            if stale and level > 0:
+                tags += ", aged - long-unused summary only"
             if fact.status == Status.CONTESTED:
                 tags += ", CONTESTED - conflicting entries exist"
             tags += ")"
@@ -467,6 +539,7 @@ class Retriever:
             lines.append(line)
             chosen.append(fact)
             used += cost
+        self._track_recalled([fact.id for fact in chosen])
 
         text = ""
         if lines:

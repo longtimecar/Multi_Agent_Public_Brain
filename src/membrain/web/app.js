@@ -858,6 +858,66 @@ async function loadAgents() {
   }
 }
 
+const HEALTH_KINDS = {
+  duplicate: ['疑似重复', 'is-warn'], conflict: ['待裁决冲突', 'is-warn'],
+  noisy: ['疑似噪声', ''], forget: ['遗忘候选', 'is-off'],
+};
+
+async function loadHealth() {
+  const grid = $('#health-findings');
+  if (!grid) return;
+  try {
+    const report = await fetchJson('/api/health');
+    $('#health-score').textContent = `${report.score} 分`;
+    const counts = Object.entries(report.counts || {});
+    $('#health-summary').textContent = counts.length
+      ? counts.map(([kind, count]) => `${HEALTH_KINDS[kind]?.[0] || kind} ${count} 项`).join(' · ')
+      : `一切正常，没有发现需要处理的问题。${report.dismissed ? `（已忽略 ${report.dismissed} 项）` : ''}`;
+    if (!report.findings.length) {
+      grid.innerHTML = '<div class="empty-state"><div class="empty-mark">H</div><h3>很健康</h3><p>没有重复、冲突或需要处理的问题。</p></div>';
+      return;
+    }
+    grid.innerHTML = report.findings.map((finding) => {
+      const [label, tone] = HEALTH_KINDS[finding.kind] || [finding.kind, ''];
+      const [a, b] = finding.fact_ids.length === 2 ? finding.fact_ids : [finding.fact_ids[0], ''];
+      const supersede = finding.kind === 'duplicate'
+        ? `<button class="button button-dark" type="button" data-health-supersede="${finding.fingerprint}" data-keep="${escapeHtml(a)}" data-drop="${escapeHtml(b)}">合并并替代</button>` : '';
+      const retract = (finding.kind === 'noisy' || finding.kind === 'forget')
+        ? `<button class="button button-outline" type="button" data-health-retract="${finding.fingerprint}" data-drop="${escapeHtml(finding.fact_ids[0])}">撤回</button>` : '';
+      return `<article class="health-finding">
+        <div class="health-finding-head"><span class="agent-chip ${tone}">${label}</span><span class="health-fp">${finding.fact_ids.length} 条</span></div>
+        <p class="health-summary-line">${escapeHtml(finding.summary)}</p>
+        <p class="health-suggestion">${escapeHtml(finding.suggestion)}</p>
+        <div class="agent-actions">${supersede}${retract}
+          <button class="button button-outline" type="button" data-health-dismiss="${finding.fingerprint}">忽略</button>
+        </div>
+      </article>`;
+    }).join('');
+    $$('[data-health-supersede]').forEach((button) => button.addEventListener('click', () => healthAction('supersede', button)));
+    $$('[data-health-retract]').forEach((button) => button.addEventListener('click', () => healthAction('retract', button)));
+    $$('[data-health-dismiss]').forEach((button) => button.addEventListener('click', () => healthAction('dismiss', button)));
+  } catch (error) {
+    grid.innerHTML = `<div class="empty-state"><div class="empty-mark">H</div><h3>扫描失败</h3><p>${escapeHtml(error.message)}</p></div>`;
+    notify(error.message, true);
+  }
+}
+
+async function healthAction(action, button) {
+  const payload = { action, fingerprint: button.dataset.healthSupersede || button.dataset.healthRetract || button.dataset.healthDismiss,
+    keep_id: button.dataset.keep || '', drop_id: button.dataset.drop || '' };
+  if (action === 'supersede' && (!payload.keep_id || !payload.drop_id)) { notify('该发现缺少成对的记忆。', true); return; }
+  if (action !== 'dismiss') {
+    const verb = action === 'supersede' ? '合并并替代' : '撤回';
+    if (!window.confirm(`确定要${verb}这条记忆？原始文件会保留在生命周期记录中，可以追溯。`)) return;
+  }
+  button.disabled = true;
+  try {
+    const result = await fetchJson('/api/health/action', { method: 'POST', body: JSON.stringify(payload) });
+    notify(result.note || (action === 'dismiss' ? '已忽略，下次扫描不再提示。' : '已处理。'));
+    await loadHealth();
+  } catch (error) { notify(error.message, true); button.disabled = false; }
+}
+
 async function copyAllPrompts() {
   const items = (state.agents || []).filter((a) => a.prompt && a.status !== 'connected' && a.status !== 'not_installed');
   if (!items.length) { notify('没有需要导出的接入提示词'); return; }
@@ -1190,7 +1250,7 @@ async function loadLibrary() {
   }
 }
 
-const VIEW_LABELS = { chat: 'Agent 对话', overview: '记忆总览', memories: '全部记忆', conflicts: '待处理冲突', episodes: '捕获记录', diffs: '会话 Diff', library: '资料库', agents: 'Agent 接入', model: '模型连接' };
+const VIEW_LABELS = { chat: 'Agent 对话', overview: '记忆总览', memories: '全部记忆', conflicts: '待处理冲突', episodes: '捕获记录', diffs: '会话 Diff', library: '资料库', agents: 'Agent 接入', health: '记忆健康', model: '模型连接' };
 
 function switchView(name, opts = {}) {
   state.currentView = name;
@@ -1237,6 +1297,7 @@ function switchView(name, opts = {}) {
   if (panelName === 'diffs') loadDiffs();
   if (panelName === 'library') loadLibrary();
   if (panelName === 'agents') loadAgents();
+  if (panelName === 'health') loadHealth();
 }
 
 function refreshCurrentView() {
@@ -1244,6 +1305,7 @@ function refreshCurrentView() {
   if (state.currentView === 'diffs') loadDiffs();
   if (state.currentView === 'library') loadLibrary();
   if (state.currentView === 'agents') loadAgents();
+  if (state.currentView === 'health') loadHealth();
 }
 
 let searchTimer;
