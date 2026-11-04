@@ -91,3 +91,39 @@ def test_extract_skips_one_off_task_specs():
     assert _one_off_task_spec("写一封请同事反馈初稿的邮件，交付可直接复制的邮件：主题行，第一段说明事项在走到哪一步")
     assert not _one_off_task_spec("我不吃辣")
     assert not _one_off_task_spec("写周报模板，以后每次都用这个格式")  # durable wording rescues
+
+
+def test_vscode_family_chat_session_collector(tmp_path, monkeypatch):
+    import json
+    import sqlite3
+
+    import membrain.session_import as si
+
+    ws = tmp_path / "AppData" / "Roaming" / "Code" / "User" / "workspaceStorage" / "ws1"
+    ws.mkdir(parents=True)
+    con = sqlite3.connect(ws / "state.vscdb")
+    con.execute("CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value BLOB)")
+    index = {"version": 1, "entries": {"s1": {"sessionId": "s1", "title": "讨论记忆系统",
+                                              "lastMessageDate": 1780301116340, "isEmpty": False}}}
+    body = {"messages": [
+        {"role": "user", "content": "帮我看看这个架构"},
+        {"role": "assistant", "content": [{"type": "text", "text": "这是三层结构"}]},
+        {"role": "user", "content": "谢谢"},
+    ]}
+    con.execute("INSERT INTO ItemTable VALUES (?, ?)",
+                ("chat.ChatSessionStore.index", json.dumps(index).encode("utf-8")))
+    con.execute("INSERT INTO ItemTable VALUES (?, ?)",
+                ("chat.ChatSessionStore.s1", json.dumps(body).encode("utf-8")))
+    con.commit()
+    con.close()
+    monkeypatch.setattr(si, "HOME", tmp_path)
+    sessions = si._collect_vscode()
+    assert len(sessions) == 1
+    row = sessions[0]
+    assert row.source == "vscode"
+    assert [r for r, _ in row.turns] == ["user", "assistant", "user"]
+    assert "架构" in row.turns[0][1]
+    assert "三层结构" in row.turns[1][1]
+    assert si._collect_trae() == []
+    # 泄漏保护：trae 根目录不存在时返回空
+    assert [s for s in si._collect_vscode_family() if s.source == "trae"] == []

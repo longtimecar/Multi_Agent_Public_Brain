@@ -396,6 +396,143 @@ def _collect_cursor() -> list[RawSession]:
     return out
 
 
+def _content_text(content: Any) -> str:
+    """Pull plain text out of a chat message content field (string or blocks)."""
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                for key in ("text", "value", "content", "markdown"):
+                    if isinstance(block.get(key), str):
+                        parts.append(block[key])
+                        break
+        return "\n".join(p for p in parts if p).strip()
+    if isinstance(content, dict):
+        for key in ("text", "value", "content", "markdown"):
+            if isinstance(content.get(key), str):
+                return content[key].strip()
+    return ""
+
+
+def _walk_chat_turns(obj: Any, turns: list[tuple[str, str]], seen: set[str]) -> None:
+    """Tolerant walk for role/content message objects in VS Code family chat stores.
+
+    The on-disk shape drifts between VS Code / Trae / Qoder versions, so we
+    recognise messages structurally instead of binding to one schema.
+    """
+    if isinstance(obj, dict):
+        role = obj.get("role")
+        if isinstance(role, str) and role.lower() in ("user", "assistant", "human", "ai"):
+            text = _content_text(obj.get("content") if obj.get("content") is not None
+                                 else obj.get("text") if obj.get("text") is not None
+                                 else obj.get("message"))
+            if text:
+                key = f"{role}|{' '.join(text.split())[:200]}"
+                if key not in seen:
+                    seen.add(key)
+                    turns.append(("user" if role.lower() in ("user", "human") else "assistant", text[:8000]))
+            return
+        for value in obj.values():
+            _walk_chat_turns(value, turns, seen)
+    elif isinstance(obj, list):
+        for value in obj:
+            _walk_chat_turns(value, turns, seen)
+
+
+def _chat_day(meta: dict[str, Any], fallback: Path) -> str:
+    ms = meta.get("lastMessageDate") or (meta.get("timing") or {}).get("created") if isinstance(meta, dict) else None
+    if isinstance(ms, (int, float)) and ms > 0:
+        try:
+            return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).date().isoformat()
+        except (OverflowError, OSError, ValueError):
+            pass
+    return _day_of(fallback)
+
+
+def _read_chat_sessions(vscdb: Path) -> list[tuple[str, dict[str, Any], list[tuple[str, str]]]]:
+    """(session_id, meta, turns) for every non-empty chat session in one state.vscdb."""
+    con = sqlite3.connect(vscdb.as_uri() + "?mode=ro", uri=True)
+    out: list[tuple[str, dict[str, Any], list[tuple[str, str]]]] = []
+    try:
+        row = con.execute("SELECT value FROM ItemTable WHERE key='chat.ChatSessionStore.index'").fetchone()
+        if row is None:
+            return out
+        raw = row[0]
+        index = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw)
+        entries = index.get("entries") or {}
+        for sid, meta in entries.items():
+            turns: list[tuple[str, str]] = []
+            seen: set[str] = set()
+            if not meta.get("isEmpty"):
+                body_rows = con.execute(
+                    "SELECT value FROM ItemTable WHERE key LIKE ? OR key LIKE ?",
+                    (f"chat.ChatSessionStore.{sid}%", f"%{sid}%",)).fetchall()
+                for body in body_rows:
+                    blob = body[0]
+                    try:
+                        data = json.loads(blob.decode("utf-8", errors="replace") if isinstance(blob, bytes) else blob)
+                    except (ValueError, AttributeError):
+                        continue
+                    _walk_chat_turns(data, turns, seen)
+            if turns:
+                out.append((str(sid), dict(meta), turns))
+    finally:
+        con.close()
+    return out
+
+
+def _collect_vscode_family() -> list[RawSession]:
+    """VS Code / Trae / Qoder chat sessions (ChatSessionStore + chatSessions/*.json)."""
+    roots = [
+        ("vscode", HOME / "AppData" / "Roaming" / "Code"),
+        ("trae", HOME / "AppData" / "Roaming" / "Trae"),
+        ("qoder", HOME / "AppData" / "Roaming" / "Qoder"),
+    ]
+    out: list[RawSession] = []
+    for source, root in roots:
+        ws = root / "User" / "workspaceStorage"
+        if not ws.is_dir():
+            continue
+        for vscdb in ws.glob("*/state.vscdb"):
+            try:
+                for sid, meta, turns in _read_chat_sessions(vscdb):
+                    title = str(meta.get("title") or "").strip()
+                    out.append(RawSession(source, f"{vscdb.parent.name}:{sid}",
+                                          f"{vscdb}#{sid}", _chat_day(meta, vscdb), turns,
+                                          title=f"[{source}] {title[:60]}" if title else ""))
+            except Exception:
+                continue
+        for session_json in ws.glob("*/chatSessions/*.json"):
+            try:
+                data = json.loads(session_json.read_text(encoding="utf-8", errors="replace"))
+            except (OSError, ValueError):
+                continue
+            turns: list[tuple[str, str]] = []
+            seen: set[str] = set()
+            _walk_chat_turns(data, turns, seen)
+            if turns:
+                out.append(RawSession(source, f"{session_json.parent.parent.name}:{session_json.stem}",
+                                      session_json.as_posix(), _day_of(session_json), turns,
+                                      title=f"[{source}] {session_json.stem[:60]}"))
+    return out
+
+
+def _collect_vscode() -> list[RawSession]:
+    return [s for s in _collect_vscode_family() if s.source == "vscode"]
+
+
+def _collect_trae() -> list[RawSession]:
+    return [s for s in _collect_vscode_family() if s.source == "trae"]
+
+
+def _collect_qoder() -> list[RawSession]:
+    return [s for s in _collect_vscode_family() if s.source == "qoder"]
+
+
 SOURCES: dict[str, Callable[[], list[RawSession]]] = {
     "claude-code": _collect_claude_code,
     "codex": _collect_codex,
@@ -403,6 +540,9 @@ SOURCES: dict[str, Callable[[], list[RawSession]]] = {
     "workbuddy": _collect_workbuddy,
     "cursor": _collect_cursor,
     "dsh": _collect_dsh,
+    "vscode": _collect_vscode,
+    "trae": _collect_trae,
+    "qoder": _collect_qoder,
 }
 
 

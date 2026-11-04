@@ -29,6 +29,9 @@ AGENT_LABELS = {
     "workbuddy": "WorkBuddy",
     "cursor": "Cursor",
     "dsh": "DeepSeek Harness",
+    "vscode": "VS Code (Copilot)",
+    "trae": "Trae",
+    "qoder": "Qoder",
 }
 
 
