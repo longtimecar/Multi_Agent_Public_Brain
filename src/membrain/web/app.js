@@ -1457,7 +1457,7 @@ async function loadLibrary() {
   }
 }
 
-const VIEW_LABELS = { chat: 'Agent 对话', overview: '记忆总览', memories: '全部记忆', conflicts: '待处理冲突', episodes: '捕获记录', diffs: '会话 Diff', library: '资料库', agents: 'Agent 接入', health: '记忆健康', model: '模型连接' };
+const VIEW_LABELS = { chat: 'Agent 对话', overview: '记忆总览', memories: '全部记忆', conflicts: '待处理冲突', episodes: '捕获记录', diffs: '会话变更', library: '资料库', agents: 'Agent 接入', health: '记忆健康', model: '模型连接' };
 
 function switchView(name, opts = {}) {
   state.currentView = name;
@@ -1604,6 +1604,7 @@ function bind() {
     renderLibraryList();
   });
   $('#crumb-home')?.addEventListener('click', () => switchView('chat'));
+  $('#open-diffs-button')?.addEventListener('click', () => switchView('diffs'));
   $('#crumb-hub')?.addEventListener('click', () => switchView('overview'));
   $('#current-view')?.addEventListener('click', () => switchView(state.currentView || 'chat'));
   $$('[data-goto]').forEach((card) => {

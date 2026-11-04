@@ -1071,6 +1071,9 @@ def make_handler(runtime: DashboardRuntime):
                 for session_dir in sorted(root.iterdir()):
                     if not session_dir.is_dir():
                         continue
+                    low = session_dir.name.lower()
+                    if low.startswith(("sim-", "sim_", "hook-switch-test", "test-", "test_", "fake-")):
+                        continue  # dev fixtures are not real sessions
                     hist = session_dir / "history"
                     if not hist.is_dir():
                         continue

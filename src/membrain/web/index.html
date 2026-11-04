@@ -28,12 +28,6 @@
           </button>
         </div>
         <div class="nav-group">
-          <div class="nav-group-title">会话审计</div>
-          <button class="nav-item" type="button" data-view="diffs" aria-label="会话 Diff">
-            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 6h8M8 12h8M8 18h5"/><path d="M5 6h.01M5 12h.01M5 18h.01"/></svg></span><span>会话 Diff</span>
-          </button>
-        </div>
-        <div class="nav-group">
           <div class="nav-group-title">资料与接入</div>
           <button class="nav-item" type="button" data-view="library" aria-label="资料库">
             <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h6v14H4zM14 5h6v14h-6z"/></svg></span><span>资料库</span>
@@ -274,6 +268,13 @@
             <summary><span>数据导入 · <strong id="import-fold-count">按需扫描</strong></span><span class="import-fold-hint">本机 Agent 会话与可选历史来源 · 展开管理</span></summary>
             <div class="import-card" id="session-import-card"><div class="side-empty">正在扫描本机 Agent 会话…</div></div>
             <div class="import-card" id="import-card"><div class="side-empty">正在检查可导入的内容…</div></div>
+          </details>
+          <details class="import-fold" id="diffs-fold">
+            <summary><span>高级 · 会话变更审计</span><span class="import-fold-hint">memory_diff 溯源排查用 · 日常无需打开</span></summary>
+            <div class="import-card">
+              <p class="import-note">记录每场会话归档后记忆提炼的决定：写入了哪几条、更新了哪几条、跳过了什么。排查“这条记忆是哪来的 / 为什么没记下来”时才用。</p>
+              <button class="button button-outline" id="open-diffs-button" type="button">打开会话变更页</button>
+            </div>
           </details>
           <div class="library-tabs" role="tablist">
             <button class="library-tab is-active" type="button" data-lib-tab="rag">文档资料 · RAG</button>
