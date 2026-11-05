@@ -21,23 +21,16 @@ from typing import Any, Callable
 from . import hooks, session_import
 
 DEFAULT_INTERVAL = 300.0
+# Captured turns are stored under the canonical agent key (`rs.source`, the same
+# spelling hooks and the relay protocol use), never a display label. Labelling
+# them "WorkBuddy" here while hooks wrote "workbuddy" gave one agent two
+# identities, and disconnecting it only hid one of them. Display names belong in
+# agents.SPECS, not in stored data.
+#
 # A session quiet this long is treated as finished — the only "that conversation
 # is over" signal most agents give us.
 DEFAULT_CONSOLIDATE_IDLE_MINUTES = 60
 CONSOLIDATE_LIMIT = 5
-
-AGENT_LABELS = {
-    "claude-code": "Claude Code",
-    "codex": "Codex",
-    "opencode": "OpenCode",
-    "workbuddy": "WorkBuddy",
-    "cursor": "Cursor",
-    "dsh": "DeepSeek Harness",
-    "vscode": "VS Code (Copilot)",
-    "trae": "Trae",
-    "qoder": "Qoder",
-}
-
 
 def enabled() -> bool:
     return os.environ.get("MEMBRAIN_WATCH", "1").strip().lower() not in ("0", "false", "off", "no")
@@ -99,7 +92,7 @@ def watch_once(svc: Any) -> dict[str, Any]:
             stats["user_turns"] += len(turns)
             stats["exact_ts"] += sum(1 for t in turns if t[4] == "exact")
             stats["estimated_ts"] += sum(1 for t in turns if t[4] != "exact")
-            agent = AGENT_LABELS.get(rs.source, rs.source)
+            agent = rs.source
             stats["captured"] += hooks.record_capture(svc, session=rs.origin, agent=agent, turns=turns)
         except Exception as exc:
             stats["errors"].append(f"{rs.source}:{rs.origin}: {exc}")

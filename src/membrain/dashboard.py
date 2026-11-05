@@ -985,7 +985,7 @@ def make_handler(runtime: DashboardRuntime):
             fact_type = query.get("type", [""])[0]
             search = query.get("q", [""])[0].strip()
             disabled = service.disabled_agents()
-            facts = [fact for fact in service.store.all_facts() if fact.source.agent not in disabled]
+            facts = [fact for fact in service.store.all_facts() if not agents.is_disabled(fact.source.agent, disabled)]
             if search:
                 direct = [
                     fact for fact in facts
@@ -1020,7 +1020,7 @@ def make_handler(runtime: DashboardRuntime):
             except ValueError:
                 limit = 30
             episodes = [episode for episode in runtime.service.store.iter_episodes()
-                        if episode.agent not in runtime.service.disabled_agents()]
+                        if not agents.is_disabled(episode.agent, runtime.service.disabled_agents())]
             episodes.sort(key=lambda episode: (episode.ts, episode.id), reverse=True)
             return {"items": [episode.model_dump(mode="json") for episode in episodes[:limit]],
                     "count": len(episodes)}

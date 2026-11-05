@@ -24,6 +24,7 @@ from datetime import date, datetime, timezone
 import re
 
 from .budget import estimate_tokens
+from .agents import is_disabled
 from .config import Settings
 from .confidence import is_promoted, render_hedged
 from .embeddings import Embedder, EmbeddingError
@@ -266,7 +267,7 @@ class Retriever:
             type_value = type.value if isinstance(type, FactType) else str(type).strip().lower()
         out: list[Fact] = []
         for fact in facts:
-            if fact.source.agent in self.disabled_agents:
+            if is_disabled(fact.source.agent, self.disabled_agents):
                 continue
             if type_value and fact.type.value != type_value:
                 continue
@@ -468,10 +469,7 @@ class Retriever:
 
     def _episode_agent_hidden(self, agent: str) -> bool:
         """Turns from a disconnected agent stay hidden, same as its facts."""
-        if not agent or not self.disabled_agents:
-            return False
-        low = agent.casefold()
-        return any(low == d.casefold() or low.startswith(d.casefold()) for d in self.disabled_agents)
+        return is_disabled(agent, self.disabled_agents)
 
     def open_tasks(self, limit: int = 20) -> list[Fact]:
         """Tasks the owner has not said are finished, most recently stated first."""

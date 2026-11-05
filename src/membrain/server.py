@@ -20,6 +20,7 @@ from typing import Any, Literal
 from mcp.server.mcpserver import MCPServer
 
 from .archive import Archive
+from .agents import is_disabled
 from .config import Settings, load_settings
 from .embeddings import Embedder
 from .index import Index
@@ -311,7 +312,7 @@ def build_server(service: MemoryService | None = None) -> MCPServer:
         cleaned = clean_turn(text)
         if not cleaned:
             return {"ok": False, "error": "nothing to record after removing injected or command text"}
-        if agent in svc.disabled_agents():
+        if is_disabled(agent, svc.disabled_agents()):
             return {"ok": False, "error": "this agent is disconnected; reconnect it to record messages"}
         session = session or f"relay-{agent}"
         now = datetime.now(timezone.utc)

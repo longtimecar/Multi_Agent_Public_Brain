@@ -15,6 +15,7 @@ from datetime import date
 from typing import Any, Callable, Iterable
 
 from .models import Fact, FactType
+from .agents import is_disabled
 
 # Types that carry the user's long-term identity. They never become decay
 # candidates no matter how long they sit unused.
@@ -70,7 +71,7 @@ class HealthScanner:
     def scan(self) -> list[Finding]:
         disabled = self.service.disabled_agents()
         facts = [fact for fact in self.service.store.all_facts()
-                 if fact.is_live and fact.source.agent not in disabled]
+                 if fact.is_live and not is_disabled(fact.source.agent, disabled)]
         findings: list[Finding] = []
         findings.extend(self._find_duplicates(facts))
         findings.extend(self._find_conflicts())
@@ -124,7 +125,7 @@ class HealthScanner:
 
     def _find_conflicts(self) -> list[Finding]:
         contested = [fact for fact in self.service.retriever.contested()
-                     if fact.source.agent not in self.service.disabled_agents()]
+                     if not is_disabled(fact.source.agent, self.service.disabled_agents())]
         by_subject: dict[str, list[Fact]] = {}
         for fact in contested:
             by_subject.setdefault(fact.subject, []).append(fact)

@@ -105,6 +105,29 @@ _VERSION_TAIL = re.compile(
 _SCOPE = re.compile(r"^@[\w.-]+$")
 
 
+def agent_key(name: str) -> str:
+    """Canonical identity for an agent name, for isolation comparisons.
+
+    One agent reaches the store under several spellings: the watcher labelled a
+    turn "WorkBuddy" while hooks and the relay protocol wrote "workbuddy", and
+    "Claude Code" against the spec key "claude-code". Isolation compared those
+    exactly, so disconnecting an agent left every memory captured under another
+    spelling visible — a control that silently half-worked. Stored data is
+    immutable, so the comparison normalises instead: case, and the
+    space/hyphen/underscore separators that differ between display names and
+    keys, all folded away.
+    """
+    return "-".join((name or "").replace("_", " ").replace("-", " ").split()).casefold()
+
+
+def is_disabled(name: str, disabled: Iterable[str]) -> bool:
+    """True when `name` is the same agent as one of the disconnected keys."""
+    if not name or not disabled:
+        return False
+    key = agent_key(name)
+    return any(key == agent_key(other) for other in disabled)
+
+
 def _clean_name(name: str) -> str:
     """Strip the version and installer noise an uninstall entry carries."""
     cleaned = _VERSION_TAIL.sub("", name).strip()

@@ -492,6 +492,53 @@ def test_close_task_rejects_non_task(rig):
         store.close_task(fact.id)
 
 
+def test_disconnecting_an_agent_hides_facts_under_every_spelling(rig):
+    """The isolation leak, closed.
+
+    The watcher labelled captured facts "WorkBuddy" while hooks and the relay
+    protocol wrote "workbuddy". Isolation compared those exactly, so after the
+    owner disconnected the agent, every memory captured through the watcher
+    stayed visible in recall.
+    """
+    from membrain.models import Evidence
+
+    _, store, _, retriever, _ = rig
+    today = date.today()
+    watched = store.write_fact(store.draft_fact(
+        type=FactType.PREFERENCE, subject="style", claim="Prefers terse memory work summaries",
+        evidence=[Evidence(episode="e1", quote="要简短", date=today, origin="stated")],
+        source_agent="WorkBuddy", source_session="s1"))
+    hooked = store.write_fact(store.draft_fact(
+        type=FactType.PREFERENCE, subject="style", claim="Prefers terse memory work notes too",
+        evidence=[Evidence(episode="e2", quote="要简短", date=today, origin="stated")],
+        source_agent="workbuddy", source_session="s2"))
+    retriever.sync_fact(watched)
+    retriever.sync_fact(hooked)
+    assert len(retriever.recall("terse memory work").hits) == 2, "both are visible while connected"
+
+    retriever.disabled_agents = {"workbuddy"}
+    ids = [f.id for f in retriever.recall("terse memory work").hits]
+    assert watched.id not in ids, "the watcher-labelled fact leaked past isolation"
+    assert hooked.id not in ids
+
+
+def test_watcher_stores_the_canonical_agent_key(rig, monkeypatch):
+    """New captures must not recreate the two-identity problem.
+
+    Labels belong in agents.SPECS for display; stored data uses the same key
+    hooks and the relay protocol use, so disconnecting an agent hides all of it.
+    """
+    from membrain import watcher
+
+    _, store, _, _, svc = rig
+    session = session_import.RawSession(
+        "claude-code", "s-x", "/tmp/s-x.jsonl", "2026-11-04",
+        [("user", "记住进度，明天继续", datetime(2026, 11, 4, 22, 0, tzinfo=timezone.utc))])
+    monkeypatch.setattr(session_import, "collect", lambda *a, **k: [session])
+    watcher.watch_once(svc)
+    assert [ep.agent for ep in store.iter_episodes()] == ["claude-code"]
+
+
 def test_open_task_is_never_a_forget_candidate(rig):
     """Unfinished work must not retire because nobody mentioned it."""
     from membrain.health import HealthScanner

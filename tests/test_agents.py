@@ -112,6 +112,45 @@ def test_sibling_registry_names_do_not_count_for_deepseek(tmp_path):
                              registry_names=["DeepSeek 3.0"]) is True
 
 
+def test_agent_key_normalizes_case_and_padding():
+    assert agents.agent_key("WorkBuddy") == agents.agent_key("workbuddy")
+    assert agents.agent_key("  Claude   Code ") == agents.agent_key("claude code")
+    assert agents.agent_key("") == ""
+
+
+def test_agent_key_normalizes_separators_not_only_case():
+    """"Claude Code" is the label, "claude-code" is the spec key.
+
+    Folding case alone still let the watcher-labelled half of an agent's
+    memories past isolation, because the display name uses a space and the key
+    uses a hyphen.
+    """
+    assert agents.agent_key("Claude Code") == agents.agent_key("claude-code")
+    assert agents.agent_key("DeepSeek Harness") == agents.agent_key("deepseek-harness")
+    assert agents.agent_key("grok_bot") == agents.agent_key("Grok Bot")
+    assert agents.is_disabled("Claude Code", {"claude-code"})
+    assert agents.is_disabled("DeepSeek Harness", {"deepseek-harness"})
+
+
+def test_is_disabled_matches_across_spellings():
+    """One agent, several spellings: disconnecting it must hide them all.
+
+    Stored data is immutable, so isolation normalises at the comparison instead
+    of pretending every capture path spelled the agent the same way.
+    """
+    disabled = {"workbuddy"}
+    assert agents.is_disabled("WorkBuddy", disabled)
+    assert agents.is_disabled("workbuddy", disabled)
+    assert agents.is_disabled("WORKBUDDY", disabled)
+    assert not agents.is_disabled("Codex", disabled)
+    assert not agents.is_disabled("", disabled)
+    assert not agents.is_disabled("WorkBuddy", set())
+    # Different products must not collapse into one another.
+    assert not agents.is_disabled("DeepSeek Harness", {"deepseek"})
+    assert not agents.is_disabled("DeepSeek Bot", {"deepseek"})
+    assert not agents.is_disabled("grok-bot-cli", {"grok-bot"})
+
+
 def test_grok_bot_list_style_connect_and_disconnect(tmp_path):
     home = tmp_path / "home"
     appdata = home / "AppData" / "Roaming"

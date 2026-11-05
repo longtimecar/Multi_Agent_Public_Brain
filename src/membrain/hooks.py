@@ -20,6 +20,7 @@ from typing import Any
 
 from .budget import estimate_tokens
 from . import injection
+from .agents import is_disabled
 from .locking import file_lock
 from .models import Episode
 from .server import MemoryService
@@ -193,7 +194,7 @@ def record_prompt(svc: MemoryService, session: str, agent: str, text: str) -> bo
     if not text or not session or session == "unknown":
         return False
     disabled = getattr(svc, "disabled_agents", None)
-    if disabled is not None and agent in disabled():
+    if disabled is not None and is_disabled(agent, disabled()):
         # The owner disconnected this agent: its turns stay out of the store
         # entirely instead of being hidden later.
         return False
