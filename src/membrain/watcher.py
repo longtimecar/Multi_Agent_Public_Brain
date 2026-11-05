@@ -21,6 +21,10 @@ from typing import Any, Callable
 from . import hooks, session_import
 
 DEFAULT_INTERVAL = 300.0
+# A session quiet this long is treated as finished — the only "that conversation
+# is over" signal most agents give us.
+DEFAULT_CONSOLIDATE_IDLE_MINUTES = 60
+CONSOLIDATE_LIMIT = 5
 
 AGENT_LABELS = {
     "claude-code": "Claude Code",
@@ -39,6 +43,19 @@ def enabled() -> bool:
     return os.environ.get("MEMBRAIN_WATCH", "1").strip().lower() not in ("0", "false", "off", "no")
 
 
+def consolidate_enabled() -> bool:
+    return os.environ.get("MEMBRAIN_CONSOLIDATE", "1").strip().lower() not in ("0", "false", "off", "no")
+
+
+def consolidate_idle_minutes() -> int:
+    try:
+        value = int(os.environ.get("MEMBRAIN_CONSOLIDATE_IDLE_MINUTES", "")
+                    or DEFAULT_CONSOLIDATE_IDLE_MINUTES)
+    except ValueError:
+        return DEFAULT_CONSOLIDATE_IDLE_MINUTES
+    return max(5, value)
+
+
 def interval() -> float:
     try:
         value = float(os.environ.get("MEMBRAIN_WATCH_INTERVAL", "") or DEFAULT_INTERVAL)
@@ -54,7 +71,8 @@ def _turn_uid(origin: str, index: int, text: str) -> str:
 
 def watch_once(svc: Any) -> dict[str, Any]:
     """One capture pass over all agent stores. Returns run stats."""
-    stats: dict[str, Any] = {"sessions": 0, "user_turns": 0, "captured": 0, "errors": []}
+    stats: dict[str, Any] = {"sessions": 0, "user_turns": 0, "captured": 0,
+                             "exact_ts": 0, "estimated_ts": 0, "errors": []}
     try:
         sessions = session_import.collect()
     except Exception as exc:
@@ -63,14 +81,24 @@ def watch_once(svc: Any) -> dict[str, Any]:
     stats["sessions"] = len(sessions)
     for rs in sessions:
         try:
-            turns = [
-                ("user", text, _turn_uid(rs.origin, index, text), datetime.now(timezone.utc))
-                for index, (role, text) in enumerate(rs.turns or [])
-                if role == "user" and text.strip()
-            ]
+            turns = []
+            for index, (role, text) in enumerate(rs.turns or []):
+                if role != "user" or not text.strip():
+                    continue
+                # The turn's own log time when the source kept one; otherwise a
+                # session-level anchor. Either way it is never the capture time:
+                # stamping "now" onto a backfilled turn makes every later
+                # time-based recall ("昨晚说的") answer with the wrong day.
+                ts, exact = rs.ts_for(index)
+                if ts is None:
+                    ts, exact = datetime.now(timezone.utc), False
+                turns.append(("user", text, _turn_uid(rs.origin, index, text), ts,
+                              "exact" if exact else "estimated"))
             if not turns:
                 continue
             stats["user_turns"] += len(turns)
+            stats["exact_ts"] += sum(1 for t in turns if t[4] == "exact")
+            stats["estimated_ts"] += sum(1 for t in turns if t[4] != "exact")
             agent = AGENT_LABELS.get(rs.source, rs.source)
             stats["captured"] += hooks.record_capture(svc, session=rs.origin, agent=agent, turns=turns)
         except Exception as exc:
@@ -118,7 +146,27 @@ class Watcher:
                 self.on_capture()
             except Exception:
                 pass
+        self._consolidate_idle(stats)
         return stats
+
+    def _consolidate_idle(self, stats: dict[str, Any]) -> None:
+        """Summarise sessions that went quiet, on the same pass that captures them.
+
+        Idempotent and cheap: a session already summarised is skipped by the
+        existing-file check, so this costs nothing on a pass with nothing new.
+        Runs here rather than in the dashboard so capture and summarisation both
+        survive the browser being closed.
+        """
+        if not consolidate_enabled():
+            return
+        try:
+            from . import consolidate
+
+            report = consolidate.consolidate(self.svc, idle_minutes=consolidate_idle_minutes(),
+                                             limit=CONSOLIDATE_LIMIT)
+            stats["summarised"] = len(report.written)
+        except Exception:
+            pass  # a summary is a convenience; it must never break capture
 
     def _loop(self) -> None:
         # First pass soon after boot so a restart catches up quickly.
@@ -138,3 +186,20 @@ class Watcher:
 
     def stop(self) -> None:
         self._stop.set()
+
+    def serve(self) -> None:
+        """Run the capture loop in the foreground, with no dashboard involved.
+
+        Capture is the only write path that does not depend on a model choosing
+        to call a tool, so it must not depend on a UI process being open either.
+        Hosting it inside the dashboard meant a night with no browser tab open
+        was a night with no memory.
+        """
+        if not enabled():
+            return
+        while not self._stop.is_set():
+            try:
+                self.run_once()
+            except Exception:
+                pass  # one bad pass must not end the watcher
+            self._stop.wait(self.poll_interval)

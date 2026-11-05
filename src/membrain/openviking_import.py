@@ -130,7 +130,7 @@ DISTILL_SYSTEM = (
     'tasks. Set scope to "project" for anything that belongs to one project, product, account or task. '
     "Use an empty list when nothing qualifies."
 )
-_TYPES = {"fact", "preference", "goal", "project"}
+_TYPES = {"fact", "preference", "goal", "project", "task"}
 CALL_PAUSE = 3.0                   # seconds between model calls; the provider rate-limits (HTTP 429)
 RATE_LIMIT_WAITS = (15.0, 30.0)    # waits before the first and second retry of a failed call
 

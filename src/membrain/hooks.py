@@ -143,8 +143,12 @@ def _save_state(svc: MemoryService, state: dict[str, Any]) -> None:
     _state_path(svc).write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
 
 
-def record_capture(svc: MemoryService, session: str, agent: str, turns: list[tuple[str, str, str, datetime]]) -> int:
-    """Append real transcript turns using each record's timestamp."""
+def record_capture(svc: MemoryService, session: str, agent: str, turns: list[tuple]) -> int:
+    """Append real transcript turns using each record's timestamp.
+
+    Each turn is (role, text, uid, ts) or (role, text, uid, ts, ts_source);
+    ts_source says whether ts is the turn's own log time or an estimate.
+    """
     with file_lock(svc.settings.home / ".state" / "capture.lock"):
         return _record_capture_locked(svc, session, agent, turns)
 
@@ -160,6 +164,21 @@ def _take_pending_extract(svc: MemoryService) -> bool:
 
 def _text_key(text: str) -> str:
     return hashlib.sha256(" ".join(text.split()).encode("utf-8")).hexdigest()
+
+
+def _index_episodes(svc: MemoryService, episodes: list[Episode]) -> None:
+    """Make freshly captured turns searchable without a full reindex.
+
+    Fail-open: a broken index must never cost the user their capture, and
+    `.index/` is disposable — `membrain reindex` rebuilds it.
+    """
+    retriever = getattr(svc, "retriever", None)
+    if retriever is None or not episodes:
+        return
+    try:
+        retriever.sync_episodes(episodes)
+    except Exception:
+        pass
 
 
 def record_prompt(svc: MemoryService, session: str, agent: str, text: str) -> bool:
@@ -192,20 +211,26 @@ def record_prompt(svc: MemoryService, session: str, agent: str, text: str) -> bo
         pending.append(key)
         del pending[:-200]
         uid = hashlib.sha256(f"prompt|{session}|{now.isoformat()}|{text}".encode("utf-8")).hexdigest()
-        svc.store.append_episodes([Episode(id=f"ep_{uid[:16]}", ts=now, session=session, agent=agent,
-                                           role="user", text=text[:20000])])
+        episode = Episode(id=f"ep_{uid[:16]}", ts=now, session=session, agent=agent,
+                          role="user", text=text[:20000], ts_source="exact")
+        svc.store.append_episodes([episode])
+        _index_episodes(svc, [episode])
         _save_state(svc, state)
     return True
 
 
-def _record_capture_locked(svc: MemoryService, session: str, agent: str, turns: list[tuple[str, str, str, datetime]]) -> int:
+def _record_capture_locked(svc: MemoryService, session: str, agent: str, turns: list[tuple]) -> int:
     state = _load_state(svc)
     seen: list[str] = state["captured"].get(session, [])
     seen_set = set(seen)
     prompts: list[str] = state.get("prompts", {}).get(session, [])
     batch: list[Episode] = []
     project = None
-    for role, text, uid, timestamp in turns:
+    for turn in turns:
+        # (role, text, uid, ts) or (role, text, uid, ts, ts_source). A caller that
+        # does not declare accuracy gets "estimated", never a claim of precision.
+        role, text, uid, timestamp = turn[0], turn[1], turn[2], turn[3]
+        ts_source = turn[4] if len(turn) > 4 else "estimated"
         if not text.strip() or uid in seen_set:
             continue
         key = _text_key(text)
@@ -224,12 +249,14 @@ def _record_capture_locked(svc: MemoryService, session: str, agent: str, turns: 
                 role=role,  # type: ignore[arg-type]
                 text=text[:20000],
                 project=project,
+                ts_source=ts_source,  # type: ignore[arg-type]
             )
         )
         seen.append(uid)
         seen_set.add(uid)
     if batch:
         svc.store.append_episodes(batch)
+        _index_episodes(svc, batch)
     state["captured"][session] = seen
     if "prompts" in state:
         state["prompts"][session] = prompts
@@ -283,7 +310,10 @@ def _transcript_turns(payload: dict[str, Any]) -> list[tuple[str, str, str, date
                 continue
             canonical = json.dumps(rec, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
             uid = str(rec.get("uuid") or hashlib.sha256(canonical.encode("utf-8")).hexdigest())
-            turns.append((role, text, uid, _record_time(rec.get("timestamp"))))
+            # The transcript's own timestamp is the turn's real time; without it
+            # _record_time falls back to "now", which is only an estimate.
+            turns.append((role, text, uid, _record_time(rec.get("timestamp")),
+                          "exact" if rec.get("timestamp") else "estimated"))
     return turns
 
 

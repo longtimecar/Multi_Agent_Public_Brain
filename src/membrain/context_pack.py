@@ -25,6 +25,8 @@ DEFAULT_TYPE_QUOTAS: dict[str, int] = {
     FactType.CASE.value: 1,
     FactType.TOOL.value: 1,
     FactType.BELIEF.value: 0,  # sensitive beliefs never get a default quota bucket
+    # Open tasks are what the user asks about first when a session resumes.
+    FactType.TASK.value: 2,
 }
 
 PURPOSE_QUOTAS: dict[str, dict[str, int]] = {
@@ -40,6 +42,7 @@ PURPOSE_QUOTAS: dict[str, dict[str, int]] = {
         FactType.CASE.value: 1,
         FactType.TOOL.value: 2,
         FactType.BELIEF.value: 0,
+        FactType.TASK.value: 2,
     },
 }
 

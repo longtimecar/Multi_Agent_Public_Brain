@@ -49,7 +49,7 @@ ADMIN_SYSTEM = (
     '{"action":"list_contested"} memories that need a decision\n'
     '{"action":"correct","args":{"memory_id":"...","replacement_claim":"..."}} replace one memory\n'
     '{"action":"retract","args":{"memory_id":"..."}} withdraw one memory\n'
-    '{"action":"record","args":{"type":"preference|fact|goal|project","subject":"...","claim":"...","quote":"..."}} '
+    '{"action":"record","args":{"type":"preference|fact|goal|project|task|case","subject":"...","claim":"...","quote":"..."}} '
     "save a new memory\n"
     '{"action":"rag_search","args":{"query":"..."}} search the knowledge library (uploaded documents)\n'
     '{"action":"rag_list"} list knowledge library documents\n'
@@ -563,7 +563,7 @@ class DashboardRuntime:
                 return False, {"error": "这条记忆已经不在有效状态。"}
             if old.type == FactType.CONSTRAINT:
                 return False, {"error": "硬约束只能由用户在记忆详情中手动修改。"}
-            evidence = [Evidence(episode=episode.id, quote=message, date=episode.ts.date(), origin="stated")]
+            evidence = [Evidence(episode=episode.id, quote=message, date=episode.local_date, origin="stated")]
             if action == "correct":
                 replacement = str(args.get("replacement_claim") or "").strip()
                 if not replacement or len(replacement) > 1000:
@@ -594,7 +594,7 @@ class DashboardRuntime:
                 return False, {"error": "quote 必须是用户本轮原话的逐字片段，不能由你编写。"}
             if len(message) > 2000:
                 return False, {"error": "用于证据的原话不能超过 2000 个字符。"}
-            evidence = [Evidence(episode=episode.id, quote=quote, date=episode.ts.date(), origin="stated")]
+            evidence = [Evidence(episode=episode.id, quote=quote, date=episode.local_date, origin="stated")]
             try:
                 fact_type = FactType(ftype)
             except ValueError:
@@ -1073,9 +1073,10 @@ def make_handler(runtime: DashboardRuntime):
             now = datetime.now(timezone.utc)
             session = f"dashboard-{uuid.uuid4().hex[:12]}"
             episode = Episode(id="", ts=now, session=session, agent="membrain-dashboard",
-                              role="user", text=quote, project=None)
+                              role="user", text=quote, project=None, ts_source="exact")
             saved_episode = service.store.append_episodes([episode])[0]
-            evidence = [Evidence(episode=saved_episode.id, quote=quote, date=now.date(), origin="stated")]
+            evidence = [Evidence(episode=saved_episode.id, quote=quote, date=saved_episode.local_date,
+                                 origin="stated")]
             replacement = service.store.draft_fact(
                 type=fact_type,
                 subject=subject,
@@ -1185,6 +1186,14 @@ def make_handler(runtime: DashboardRuntime):
                     self._json(200, {"agents": items})
                 elif parsed.path == "/api/health":
                     self._json(200, runtime.health_report())
+                elif parsed.path == "/api/tasks":
+                    tasks = runtime.service.retriever.open_tasks(limit=50)
+                    self._json(200, {"tasks": [
+                        {"id": f.id, "subject": f.subject, "claim": f.claim,
+                         "stated_on": f.valid_from.isoformat(),
+                         "confidence": round(f.confidence, 2)}
+                        for f in tasks
+                    ], "count": len(tasks)})
                 elif parsed.path == "/api/import/preview":
                     self._json(200, runtime.import_preview())
                 elif parsed.path == "/api/import/sessions/preview":

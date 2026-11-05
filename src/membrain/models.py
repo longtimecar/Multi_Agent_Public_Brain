@@ -18,6 +18,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .config import local_date as _local_date
+
 ID_RE = re.compile(r"^f_\d{8}_[a-z0-9]{6}$")
 
 
@@ -33,6 +35,10 @@ class FactType(str, Enum):
     CASE = "case"
     TOOL = "tool"
     BELIEF = "belief"
+    # Work the user handed to a later session: a handoff, plan, commitment or
+    # progress snapshot. Distinct from `goal` (what you want to become) because
+    # its useful life is "the next session", not "a month from now".
+    TASK = "task"
 
 
 # Types agents may write via MCP (never constraint).
@@ -46,6 +52,7 @@ AGENT_WRITABLE_TYPES = frozenset({
     FactType.CASE,
     FactType.TOOL,
     FactType.BELIEF,
+    FactType.TASK,
 })
 
 
@@ -122,6 +129,11 @@ class Fact(BaseModel):
     status: Status = Status.ACTIVE
     retracted_reason: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    # When the work a `task` describes was finished. Only the owner's own words
+    # (or a session summary confirming it) may set this — never a calendar rule,
+    # because an unfinished task must not disappear just because nobody mentioned
+    # it for a while. Null means "not finished, or not a task".
+    closed_at: date | None = None
     # --- Scheme A (optional / backward compatible) ---
     uri: str | None = None
     abstract: str | None = None  # L0 one-liner
@@ -187,6 +199,11 @@ class Fact(BaseModel):
     def is_live(self) -> bool:
         return self.status in (Status.ACTIVE, Status.CONTESTED) and self.valid_to is None
 
+    @property
+    def is_open_task(self) -> bool:
+        """A task the user has not said is finished. Drives the to-do query."""
+        return self.type == FactType.TASK and self.closed_at is None and self.is_live
+
 
 class Episode(BaseModel):
     """A captured turn. Append-only, never edited, never indexed destructively."""
@@ -200,3 +217,27 @@ class Episode(BaseModel):
     role: Literal["user", "assistant", "system", "tool"]
     text: str
     project: str | None = None
+    # How much the timestamp should be trusted. "exact" = read from the agent's
+    # own per-turn log time. "estimated" = the source kept no per-turn time, so
+    # ts is a session-level or day-level stand-in. Defaults to "estimated":
+    # a capture path that forgets to declare its accuracy must degrade to
+    # "we are not sure", never to "trust me".
+    ts_source: Literal["exact", "estimated"] = "estimated"
+
+    @field_validator("ts")
+    @classmethod
+    def _ts_must_be_aware(cls, value: datetime) -> datetime:
+        # A naive timestamp makes every day-window filter ("昨晚") silently
+        # wrong by the local UTC offset, so it is rejected at the boundary.
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("episode timestamps must be timezone-aware")
+        return value
+
+    @property
+    def local_date(self) -> date:
+        """The calendar day this turn belongs to for the operator."""
+        return _local_date(self.ts)
+
+    @property
+    def time_is_exact(self) -> bool:
+        return self.ts_source == "exact"

@@ -12,6 +12,8 @@ import math
 import os
 from collections.abc import MutableMapping
 from dataclasses import dataclass
+from datetime import date, datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 
 _PKG_ROOT = Path(__file__).resolve().parents[2]
@@ -85,6 +87,36 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+@lru_cache(maxsize=8)
+def _tzinfo_for(name: str):
+    """Resolve an IANA timezone name; fall back to the system default."""
+    if name:
+        try:
+            from zoneinfo import ZoneInfo
+
+            return ZoneInfo(name)
+        except Exception:
+            pass
+    return datetime.now(timezone.utc).astimezone().tzinfo
+
+
+def resolve_tzinfo():
+    """The operator's timezone: MEMBRAIN_TZ (IANA name) or the system default.
+
+    Time-aware recall compares a user's phrase ("昨晚") against stored turns,
+    so both sides must be the same calendar. Reading it here keeps `.env`
+    handling in one place instead of scattered os.environ lookups.
+    """
+    return _tzinfo_for((_env("MEMBRAIN_TZ") or "").strip())
+
+
+def local_date(ts: datetime) -> date:
+    """Calendar day of a timestamp in the operator's timezone."""
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts.astimezone(resolve_tzinfo()).date()
+
+
 @dataclass(frozen=True)
 class Settings:
     home: Path
@@ -124,6 +156,9 @@ class Settings:
     # Optional legacy source. It is unset by default so a fresh install never
     # scans a path that belonged to the machine that built the release.
     openviking_root: Path | None = None
+    # Operator timezone (IANA name, "" = system default). Drives which calendar
+    # day a captured turn belongs to and how "昨晚" resolves on recall.
+    tz: str = ""
 
     @property
     def facts_dir(self) -> Path:
@@ -170,6 +205,7 @@ class Settings:
             "evolution": "enabled" if getattr(self, "evolution_enabled", False) else "disabled",
             "rerank_provider": getattr(self, "rerank_provider", "heuristic"),
             "skills_inject": "on" if getattr(self, "skills_inject_session_start", True) else "off",
+            "timezone": self.tz or "system default",
         }
 
 
@@ -220,4 +256,5 @@ def load_settings() -> Settings:
         rerank_model=_env("MEMBRAIN_RERANK_MODEL"),
         rerank_timeout=_env_float("MEMBRAIN_RERANK_TIMEOUT", 20.0),
         openviking_root=openviking_root,
+        tz=(_env("MEMBRAIN_TZ") or "").strip(),
     )

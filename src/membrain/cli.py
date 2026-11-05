@@ -271,6 +271,105 @@ def cmd_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_tasks(args: argparse.Namespace) -> int:
+    """List work the owner handed to a later session and has not closed."""
+    svc = _svc()
+    tasks = svc.retriever.open_tasks(limit=getattr(args, "limit", 50) or 50)
+    print(json.dumps({
+        "open_tasks": [
+            {
+                "id": f.id,
+                "subject": f.subject,
+                "claim": f.claim,
+                "stated_on": f.valid_from.isoformat(),
+                "confidence": round(f.confidence, 2),
+                "status": f.status.value,
+            }
+            for f in tasks
+        ],
+        "count": len(tasks),
+        "hint": "membrain correct --id <id> 关闭已完成的任务；未关闭的任务不会被遗忘机制降权。",
+    }, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_consolidate(args: argparse.Namespace) -> int:
+    """Write session summaries (a derived view; never evidence)."""
+    from . import consolidate
+
+    svc = _svc()
+    report = consolidate.consolidate(
+        svc, session=args.session, idle_minutes=args.idle_minutes,
+        limit=args.limit, force=args.force,
+    )
+    print(json.dumps(report.as_dict(), ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    """Foreground auto-capture. Runs with or without the dashboard."""
+    from .watcher import Watcher, enabled, interval
+
+    if not enabled():
+        print("MEMBRAIN_WATCH is off; nothing to do.")
+        return 0
+    svc = _svc()
+    poll = float(args.interval) if args.interval else interval()
+    watcher = Watcher(svc, poll_interval=poll)
+    if args.once:
+        stats = watcher.run_once()
+        print(json.dumps(stats, ensure_ascii=False, default=str))
+        return 0
+    print(f"membrain watcher: polling every {poll:.0f}s. Ctrl-C to stop.")
+    try:
+        watcher.serve()
+    except KeyboardInterrupt:
+        watcher.stop()
+        print("\nstopped.")
+    return 0
+
+
+def cmd_autostart(args: argparse.Namespace) -> int:
+    """Install or remove capture-at-login, so memory does not depend on the UI."""
+    import subprocess
+    import sys
+
+    task_name = "membrain-watcher"
+    if sys.platform != "win32":
+        print(json.dumps({
+            "installed": False,
+            "platform": sys.platform,
+            "how": ("Run `membrain watch` from a systemd user unit or a launchd "
+                    "agent; both should restart it on failure."),
+        }, ensure_ascii=False, indent=2))
+        return 0
+
+    python = Path(sys.executable).with_name("pythonw.exe")
+    interpreter = str(python) if python.exists() else sys.executable
+    if args.remove:
+        done = subprocess.run(["schtasks", "/Delete", "/TN", task_name, "/F"],
+                              capture_output=True, text=True)
+        print(json.dumps({"removed": done.returncode == 0,
+                          "detail": (done.stdout or done.stderr).strip()}, ensure_ascii=False))
+        return 0 if done.returncode == 0 else 1
+
+    # ONLOGON keeps capture running for the whole session; /RL LIMITED means it
+    # never needs elevation, and /F replaces a previous install instead of failing.
+    cmd = [
+        "schtasks", "/Create", "/TN", task_name, "/SC", "ONLOGON", "/RL", "LIMITED", "/F",
+        "/TR", f'"{interpreter}" -m membrain.cli watch',
+    ]
+    done = subprocess.run(cmd, capture_output=True, text=True)
+    print(json.dumps({
+        "installed": done.returncode == 0,
+        "task_name": task_name,
+        "command": f'"{interpreter}" -m membrain.cli watch',
+        "detail": (done.stdout or done.stderr).strip(),
+        "note": "需要重启或注销后生效；也可在任务计划程序里手动运行一次。",
+    }, ensure_ascii=False, indent=2))
+    return 0 if done.returncode == 0 else 1
+
+
 def cmd_hook(args: argparse.Namespace) -> int:
     from .hooks import run
 
@@ -560,6 +659,25 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("reindex", help="rebuild the derived index").set_defaults(func=cmd_reindex)
     sub.add_parser("stats", help="show store status").set_defaults(func=cmd_stats)
+    t = sub.add_parser("tasks", help="list open tasks handed to a later session")
+    t.add_argument("--limit", type=int, default=50)
+    t.set_defaults(func=cmd_tasks)
+
+    w = sub.add_parser("watch", help="run auto-capture in the foreground (no dashboard needed)")
+    w.add_argument("--once", action="store_true", help="run a single capture pass and exit")
+    w.add_argument("--interval", type=float, default=None, help="seconds between passes")
+    w.set_defaults(func=cmd_watch)
+
+    au = sub.add_parser("autostart", help="install capture-at-login so memory survives a reboot")
+    au.add_argument("--remove", action="store_true", help="remove the installed autostart entry")
+    au.set_defaults(func=cmd_autostart)
+
+    co = sub.add_parser("consolidate", help="write session summaries (derived view, not evidence)")
+    co.add_argument("--session", default=None, help="one session id; default: sessions that went quiet")
+    co.add_argument("--idle-minutes", type=int, default=60)
+    co.add_argument("--limit", type=int, default=10)
+    co.add_argument("--force", action="store_true", help="rewrite summaries that already exist")
+    co.set_defaults(func=cmd_consolidate)
     sub.add_parser("doctor", help="check backends, index and project hooks").set_defaults(func=cmd_doctor)
 
     h = sub.add_parser("hook", help="hook entrypoint (reads JSON on stdin)")

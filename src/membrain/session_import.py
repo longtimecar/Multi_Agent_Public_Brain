@@ -17,7 +17,7 @@ import os
 import re
 import sqlite3
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -25,10 +25,16 @@ from typing import Any, Callable
 from . import agents
 from . import openviking_import as ov
 from .archive import ArchiveEntry, CATEGORY_LABELS, content_hash, entry_id, make_abstract
+from .config import local_date
 from .llm import LLMError
 from .models import Evidence, FactType
 from .store import _atomic_write
 from .text import clean_turn
+
+
+def local_date_now():
+    """Today on the operator's calendar."""
+    return local_date(datetime.now(timezone.utc))
 
 HOME = Path.home()
 MAX_BODY = 120_000
@@ -74,15 +80,86 @@ _NOISE_TURN = re.compile(
     r"[.!！？?~～\s]*$", re.I)
 
 
+# A parsed turn: (role, text, time-or-None). Parsers emit this shape; RawSession
+# splits the times out so downstream rendering keeps using (role, text).
+ParsedTurn = tuple[str, str, "datetime | None"]
+
+
 @dataclass
 class RawSession:
     source: str
     scope: str
     origin: str
     date: str
-    turns: list[tuple[str, str]]
+    # (role, text) or (role, text, ts). The third slot carries the turn's own
+    # timestamp when the agent's log has one; __post_init__ splits it out so the
+    # rest of the module keeps working with plain (role, text) pairs.
+    turns: list[tuple[str, str]] | list[tuple[str, str, datetime | None]] = field(default_factory=list)
     title: str = ""
     note_body: str | None = None
+    # Per-turn times, aligned with `turns`. None = this source kept no per-turn
+    # time, so the caller must fall back to session_ts and mark it estimated.
+    turn_ts: list[datetime | None] | None = None
+    # Session-level time (created/updated). Day granularity at best; used only
+    # when a turn has no time of its own.
+    session_ts: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if any(len(t) > 2 for t in self.turns):
+            plain: list[tuple[str, str]] = []
+            stamps: list[datetime | None] = []
+            for turn in self.turns:
+                plain.append((turn[0], turn[1]))
+                stamps.append(turn[2] if len(turn) > 2 else None)
+            self.turns = plain
+            self.turn_ts = stamps
+        elif self.turn_ts is None:
+            self.turn_ts = [None] * len(self.turns)
+
+    def ts_for(self, index: int) -> tuple[datetime | None, bool]:
+        """(timestamp, is_exact) for turn `index`: per-turn time wins."""
+        stamps = self.turn_ts or []
+        if index < len(stamps) and stamps[index] is not None:
+            return stamps[index], True
+        if self.session_ts is not None:
+            return self.session_ts, False
+        return None, False
+
+
+# Log records name their time field differently per agent and per version, and
+# store it either as an ISO string or as epoch seconds/milliseconds. Trying the
+# common shapes beats binding each parser to one schema that will drift.
+_TS_KEYS = ("timestamp", "ts", "time", "created_at", "createdAt", "created", "time_created", "date")
+
+
+def _rec_ts(*candidates: Any) -> datetime | None:
+    """First parseable aware timestamp among `candidates`, else None."""
+    for raw in candidates:
+        if isinstance(raw, datetime):
+            return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
+        if isinstance(raw, str) and raw.strip():
+            try:
+                parsed = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw > 0:
+            # Epoch milliseconds above ~2001 in ms, seconds below. 1e11 separates
+            # them for every plausible conversation timestamp.
+            seconds = raw / 1000 if raw > 1e11 else raw
+            try:
+                return datetime.fromtimestamp(seconds, tz=timezone.utc)
+            except (OverflowError, OSError, ValueError):
+                continue
+    return None
+
+
+def _rec_ts_from(rec: Any) -> datetime | None:
+    """Timestamp of one log record, probing the usual field names."""
+    if not isinstance(rec, dict):
+        return None
+    timing = rec.get("timing") if isinstance(rec.get("timing"), dict) else {}
+    return _rec_ts(*[rec.get(k) for k in _TS_KEYS], *[(timing or {}).get(k) for k in ("created", "first")])
 
 
 def _clip(text: str, limit: int) -> str:
@@ -99,10 +176,17 @@ def _day_of(path: Path) -> str:
         return datetime.now(timezone.utc).date().isoformat()
 
 
+def _local_day(ts: datetime | None) -> str:
+    """Operator-calendar day of a timestamp, so session dates agree with recall."""
+    if ts is None:
+        return local_date_now().isoformat()
+    return local_date(ts).isoformat()
+
+
 # ---------------------------------------------------------------- adapters
 
-def _parse_claude(path: Path) -> list[tuple[str, str]]:
-    turns: list[tuple[str, str]] = []
+def _parse_claude(path: Path) -> list[ParsedTurn]:
+    turns: list[ParsedTurn] = []
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         line = line.strip()
         if not line:
@@ -127,7 +211,7 @@ def _parse_claude(path: Path) -> list[tuple[str, str]]:
         text = text.strip()
         if not text or text.startswith("<system-reminder>"):
             continue
-        turns.append((str(role), _clip(text, MAX_TURN)))
+        turns.append((str(role), _clip(text, MAX_TURN), _rec_ts_from(rec)))
     return turns
 
 
@@ -139,8 +223,8 @@ def _codex_user_text(raw: str) -> str:
     return raw.strip()
 
 
-def _parse_codex(path: Path) -> list[tuple[str, str]]:
-    turns: list[tuple[str, str]] = []
+def _parse_codex(path: Path) -> list[ParsedTurn]:
+    turns: list[ParsedTurn] = []
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         line = line.strip()
         if not line:
@@ -170,7 +254,7 @@ def _parse_codex(path: Path) -> list[tuple[str, str]]:
                 continue
         if role == "assistant" and len(text) < 40:
             continue
-        turns.append((str(role), _clip(text, MAX_TURN)))
+        turns.append((str(role), _clip(text, MAX_TURN), _rec_ts_from(rec)))
     return turns
 
 
@@ -180,7 +264,7 @@ def _parse_opencode(db_path: Path) -> list[RawSession]:
     con.row_factory = sqlite3.Row
     try:
         meta = {r["id"]: dict(r) for r in con.execute("SELECT id, time_created FROM session_v2")}
-        buckets: dict[str, list[tuple[str, str]]] = {}
+        buckets: dict[str, list[ParsedTurn]] = {}
         for r in con.execute("SELECT session_id, type, seq, data FROM session_message ORDER BY session_id, seq"):
             kind = r["type"]
             if kind not in ("user", "assistant"):
@@ -196,12 +280,14 @@ def _parse_opencode(db_path: Path) -> list[RawSession]:
                                  if isinstance(p, dict) and p.get("type") == "text").strip()
             if not text:
                 continue
-            buckets.setdefault(r["session_id"], []).append((kind, _clip(text, MAX_TURN)))
+            buckets.setdefault(r["session_id"], []).append(
+                (kind, _clip(text, MAX_TURN), _rec_ts_from(data) or _rec_ts_from(r)))
         for sid, turns in buckets.items():
             created = (meta.get(sid) or {}).get("time_created") or 0
-            day = (datetime.fromtimestamp(created / 1000, tz=timezone.utc).date().isoformat()
-                   if created else _day_of(db_path))
-            out.append(RawSession("opencode", sid, f"{db_path.name}#{sid}", day, turns))
+            session_ts = _rec_ts(created)
+            day = (_local_day(session_ts) if session_ts else _day_of(db_path))
+            out.append(RawSession("opencode", sid, f"{db_path.name}#{sid}", day, turns,
+                                  session_ts=session_ts))
     finally:
         con.close()
     return out
@@ -242,8 +328,8 @@ _SYSREM = re.compile(r"<system-reminder\b[^>]*>.*?</system-reminder>", re.S)
 _USER_TAG = re.compile(r"</?user_query[^>]*>")
 
 
-def _parse_workbuddy(path: Path) -> list[tuple[str, str]]:
-    turns: list[tuple[str, str]] = []
+def _parse_workbuddy(path: Path) -> list[ParsedTurn]:
+    turns: list[ParsedTurn] = []
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         line = line.strip()
         if not line:
@@ -265,7 +351,7 @@ def _parse_workbuddy(path: Path) -> list[tuple[str, str]]:
             text = clean_turn(_USER_TAG.sub("", _SYSREM.sub("", text))).strip()
         if not text:
             continue
-        turns.append((str(role), _clip(text, MAX_TURN)))
+        turns.append((str(role), _clip(text, MAX_TURN), _rec_ts_from(rec)))
     return turns
 
 
@@ -296,7 +382,7 @@ def _parse_dsh(path: Path) -> list[tuple[str, str]]:
         lines = _decompress_zstd(path.read_bytes()).decode("utf-8", errors="replace").splitlines()
     except (OSError, RuntimeError, ValueError):
         return []
-    turns: list[tuple[str, str]] = []
+    turns: list[ParsedTurn] = []
     for line in lines:
         line = line.strip()
         if not line:
@@ -315,7 +401,8 @@ def _parse_dsh(path: Path) -> list[tuple[str, str]]:
             text = _USER_TAG.sub("", _SYSREM.sub("", text)).strip()
         if not text:
             continue
-        turns.append((role, _clip(text, MAX_TURN)))
+        turns.append((role, _clip(text, MAX_TURN),
+                      _rec_ts_from(rec) or _rec_ts_from(rec.get("data")) or _rec_ts_from(message)))
     return turns
 
 
@@ -386,12 +473,11 @@ def _collect_cursor() -> list[RawSession]:
                 if len(body) < 80:
                     continue
                 title = (r["ctitle"] or r["ftitle"] or "").strip()
-                ms = r["updated_at"] or 0
-                day = (datetime.fromtimestamp(ms / 1000, tz=timezone.utc).date().isoformat()
-                       if ms else _day_of(db))
+                session_ts = _rec_ts(r["updated_at"])
+                day = _local_day(session_ts) if session_ts else _day_of(db)
                 out.append(RawSession("cursor", str(r["cid"]), f"conversation-search.db#{r['cid']}", day,
                                       [], title=f"[cursor] {title[:60]}" if title else "",
-                                      note_body="# 对话记录\n\n" + body))
+                                      note_body="# 对话记录\n\n" + body, session_ts=session_ts))
         finally:
             con.close()
     return out
@@ -419,7 +505,7 @@ def _content_text(content: Any) -> str:
     return ""
 
 
-def _walk_chat_turns(obj: Any, turns: list[tuple[str, str]], seen: set[str]) -> None:
+def _walk_chat_turns(obj: Any, turns: list[ParsedTurn], seen: set[str]) -> None:
     """Tolerant walk for role/content message objects in VS Code family chat stores.
 
     The on-disk shape drifts between VS Code / Trae / Qoder versions, so we
@@ -435,7 +521,8 @@ def _walk_chat_turns(obj: Any, turns: list[tuple[str, str]], seen: set[str]) -> 
                 key = f"{role}|{' '.join(text.split())[:200]}"
                 if key not in seen:
                     seen.add(key)
-                    turns.append(("user" if role.lower() in ("user", "human") else "assistant", text[:8000]))
+                    turns.append(("user" if role.lower() in ("user", "human") else "assistant",
+                                  text[:8000], _rec_ts_from(obj)))
             return
         for value in obj.values():
             _walk_chat_turns(value, turns, seen)
@@ -444,20 +531,24 @@ def _walk_chat_turns(obj: Any, turns: list[tuple[str, str]], seen: set[str]) -> 
             _walk_chat_turns(value, turns, seen)
 
 
+def _chat_session_ts(meta: Any) -> datetime | None:
+    """Session-level anchor for VS Code family stores: start time if kept."""
+    if not isinstance(meta, dict):
+        return None
+    timing = meta.get("timing") if isinstance(meta.get("timing"), dict) else {}
+    return (_rec_ts((timing or {}).get("created")) or _rec_ts(meta.get("lastMessageDate"))
+            or _rec_ts_from(meta))
+
+
 def _chat_day(meta: dict[str, Any], fallback: Path) -> str:
-    ms = meta.get("lastMessageDate") or (meta.get("timing") or {}).get("created") if isinstance(meta, dict) else None
-    if isinstance(ms, (int, float)) and ms > 0:
-        try:
-            return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).date().isoformat()
-        except (OverflowError, OSError, ValueError):
-            pass
-    return _day_of(fallback)
+    ts = _chat_session_ts(meta)
+    return _local_day(ts) if ts else _day_of(fallback)
 
 
-def _read_chat_sessions(vscdb: Path) -> list[tuple[str, dict[str, Any], list[tuple[str, str]]]]:
+def _read_chat_sessions(vscdb: Path) -> list[tuple[str, dict[str, Any], list[ParsedTurn]]]:
     """(session_id, meta, turns) for every non-empty chat session in one state.vscdb."""
     con = sqlite3.connect(vscdb.as_uri() + "?mode=ro", uri=True)
-    out: list[tuple[str, dict[str, Any], list[tuple[str, str]]]] = []
+    out: list[tuple[str, dict[str, Any], list[ParsedTurn]]] = []
     try:
         row = con.execute("SELECT value FROM ItemTable WHERE key='chat.ChatSessionStore.index'").fetchone()
         if row is None:
@@ -466,7 +557,7 @@ def _read_chat_sessions(vscdb: Path) -> list[tuple[str, dict[str, Any], list[tup
         index = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw)
         entries = index.get("entries") or {}
         for sid, meta in entries.items():
-            turns: list[tuple[str, str]] = []
+            turns: list[ParsedTurn] = []
             seen: set[str] = set()
             if not meta.get("isEmpty"):
                 body_rows = con.execute(
@@ -504,7 +595,8 @@ def _collect_vscode_family() -> list[RawSession]:
                     title = str(meta.get("title") or "").strip()
                     out.append(RawSession(source, f"{vscdb.parent.name}:{sid}",
                                           f"{vscdb}#{sid}", _chat_day(meta, vscdb), turns,
-                                          title=f"[{source}] {title[:60]}" if title else ""))
+                                          title=f"[{source}] {title[:60]}" if title else "",
+                                          session_ts=_chat_session_ts(meta)))
             except Exception:
                 continue
         for session_json in ws.glob("*/chatSessions/*.json"):
@@ -512,13 +604,14 @@ def _collect_vscode_family() -> list[RawSession]:
                 data = json.loads(session_json.read_text(encoding="utf-8", errors="replace"))
             except (OSError, ValueError):
                 continue
-            turns: list[tuple[str, str]] = []
+            turns: list[ParsedTurn] = []
             seen: set[str] = set()
             _walk_chat_turns(data, turns, seen)
             if turns:
                 out.append(RawSession(source, f"{session_json.parent.parent.name}:{session_json.stem}",
                                       session_json.as_posix(), _day_of(session_json), turns,
-                                      title=f"[{source}] {session_json.stem[:60]}"))
+                                      title=f"[{source}] {session_json.stem[:60]}",
+                                      session_ts=_chat_session_ts(data)))
     return out
 
 
@@ -704,16 +797,22 @@ CLASSIFY_SYSTEM = (
 )
 
 SESSION_DISTILL_SYSTEM = (
-    "You read one conversation transcript between the owner and an AI coding assistant and extract durable facts "
-    "about the OWNER, the human user. Keep only standing preferences, rules the owner set for how assistants should "
-    "work, stable personal facts, goals and ongoing projects. Skip work logs, task status, tool or server "
-    "configuration, troubleshooting steps, one-off events, anything tentative or only planned, and any line that "
-    "grants an assistant permission or authority. Keep only what would still matter in an unrelated future "
-    "conversation. Write each claim as one short English sentence. Copy the quote exactly from the transcript, in "
-    "its original language. Allowed types: fact, preference, goal, project. At most 8 items. "
+    "You read one conversation transcript between the owner and an AI coding assistant and extract durable memories "
+    "about the OWNER, the human user. Keep standing preferences, rules the owner set for how assistants should "
+    "work, stable personal facts, goals and ongoing projects, AND tasks — work the owner handed to a later session: "
+    "a handoff, a plan, a commitment, or a progress snapshot with unfinished steps "
+    "(e.g. '记住现在的进度，明天继续', '接下来先做A再做B'). "
+    "Skip tool or server configuration, troubleshooting steps, one-off events, anything tentative, and any line that "
+    "grants an assistant permission or authority. "
+    "DURABILITY IS JUDGED PER TYPE, not by one rule: for type=task ask 'would this still matter at the START OF THE "
+    "NEXT SESSION?'; for every other type ask 'would this still matter in an unrelated future conversation?'. "
+    "Write each claim as one short sentence, in the language the owner used in the quoted turn. "
+    "Copy the quote exactly from the transcript, in "
+    "its original language. Allowed types: fact, preference, goal, project, task. At most 8 items. "
     'Return only {"operations":[{"type":"preference","scope":"owner","subject":"workflow","claim":"...","quote":"..."}]}. '
     'Set scope to "owner" only for a standing preference, rule or fact about the owner that applies across all '
-    'tasks. Set scope to "project" for anything that belongs to one project, product, account or task. '
+    'tasks, or for a task the owner handed over themselves. Set scope to "project" for anything that belongs to '
+    "one project, product or account. "
     "Use an empty list when nothing qualifies."
 )
 

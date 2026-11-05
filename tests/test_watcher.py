@@ -86,11 +86,30 @@ def test_chat_sessions_lists_dashboard_sessions(tmp_path, monkeypatch):
 
 
 def test_extract_skips_one_off_task_specs():
-    from membrain.extract import _one_off_task_spec
+    from membrain.extract import _is_one_off_spec, _is_task_handoff
 
-    assert _one_off_task_spec("写一封请同事反馈初稿的邮件，交付可直接复制的邮件：主题行，第一段说明事项在走到哪一步")
-    assert not _one_off_task_spec("我不吃辣")
-    assert not _one_off_task_spec("写周报模板，以后每次都用这个格式")  # durable wording rescues
+    assert _is_one_off_spec("写一封请同事反馈初稿的邮件，交付可直接复制的邮件：主题行，第一段说明事项在走到哪一步")
+    assert not _is_one_off_spec("我不吃辣")
+    assert not _is_one_off_spec("写周报模板，以后每次都用这个格式")  # durable wording rescues
+
+
+def test_task_handoff_vocabulary_is_separate_from_habit_vocabulary():
+    """The old single durable-word list scored handoffs against habit words.
+
+    A task handoff says "明天继续", never "以后每次", so it always looked
+    one-off and was dropped. The two vocabularies are now judged separately.
+    """
+    from membrain.extract import _is_one_off_spec, _is_task_handoff
+
+    handoff = "记住现在的进度，明天继续"
+    assert _is_task_handoff(handoff)
+    assert not _is_task_handoff("我不吃辣")
+    assert not _is_task_handoff("写一封邮件，主题行……第一段……")
+    # A turn that is both a deliverable spec and a handoff must survive: the
+    # gate runs after the type is known, so it is kept as a task.
+    both = "帮我写一份交接文档，记住进度明天继续"
+    assert _is_one_off_spec(both)
+    assert _is_task_handoff(both)
 
 
 def test_vscode_family_chat_session_collector(tmp_path, monkeypatch):

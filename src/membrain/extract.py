@@ -19,6 +19,10 @@ from .text import clean_turn, widen_to_clause
 
 STATE_FILE = ".state/extraction.json"
 MAX_BATCH = 20
+# Non-evidence turns included around the batch so the model can see what a
+# handoff refers to. Kept small: this is context, not a transcript dump.
+CONTEXT_BEFORE = 6
+CONTEXT_AFTER = 2
 
 
 class JSONClient(Protocol):
@@ -95,16 +99,33 @@ _TASK_SPECS = re.compile(
     r"交付可直接|this (email|message|document|reply|post)\b|for this (task|assignment|deliverable)\b",
     re.IGNORECASE,
 )
-_DURABLE_MARK = re.compile(
+# Standing/habitual wording: the user wants this applied across future situations.
+_HABIT_MARK = re.compile(
     r"以后|每次|总是|一直|不要|别再|从今|从此|一律|习惯|prefer|always|from now on|going forward|"
     r"every time|in general|generally|by default",
     re.IGNORECASE,
 )
+# Handoff wording: the user is passing work to a later session. This is a
+# separate vocabulary from _HABIT_MARK on purpose — a task handoff almost never
+# says "always" or "以后", so scoring handoffs against the habit list marked
+# every real task memory as a one-off spec and dropped it.
+_HANDOFF_MARK = re.compile(
+    r"明天|今晚|明天继续|今日|今天|接下来|下一步|回头|待会|稍后|下次|下回|收工|进度|待办|未完成|没做完|"
+    r"继续|接着做|留着|记(?:住|下)|"
+    r"tomorrow|tonight|next (?:session|time|step)|pick (?:this|it|up)|resume|continue|"
+    r"hand ?off|follow ?up|to-?do|left off|where (?:i|we) (?:left|stopped)|pending|unfinished",
+    re.IGNORECASE,
+)
 
 
-def _one_off_task_spec(text: str) -> bool:
-    """True when the turn is a deliverable spec for THIS task with no durable wording."""
-    return bool(_TASK_SPECS.search(text)) and not _DURABLE_MARK.search(text)
+def _is_one_off_spec(text: str) -> bool:
+    """A deliverable spec for THIS turn's work product, with no lasting wording."""
+    return bool(_TASK_SPECS.search(text)) and not _HABIT_MARK.search(text)
+
+
+def _is_task_handoff(text: str) -> bool:
+    """The turn passes work to a later session, so it can support a task memory."""
+    return bool(_HANDOFF_MARK.search(text))
 
 
 def _quote_episode(episodes: dict[str, Episode], episode_id: str, quote: str) -> Episode:
@@ -119,7 +140,7 @@ def _quote_episode(episodes: dict[str, Episode], episode_id: str, quote: str) ->
 
 def _evidence(episode: Episode, quote: str) -> Evidence:
     return Evidence(episode=episode.id, quote=widen_to_clause(episode.text, quote),
-                    date=episode.ts.date(), origin="stated")
+                    date=episode.local_date, origin="stated")
 
 
 class Extractor:
@@ -130,12 +151,20 @@ class Extractor:
 
     def _context(self, users: list[Episode], all_episodes: list[Episode]) -> str:
         first = min((all_episodes.index(ep) for ep in users), default=0)
-        previous_assistant = next((ep for ep in reversed(all_episodes[:first])
-                                   if ep.session == users[0].session and ep.role == "assistant"), None)
-        context = []
-        if previous_assistant:
-            context.append({"role": "assistant", "evidence": False, "text": clean_turn(previous_assistant.text)})
+        last = max((all_episodes.index(ep) for ep in users), default=0)
+        session = users[0].session
+        # A handoff like "记住进度，明天继续" is uninterpretable on its own: the
+        # model has to see the work it refers to. Context turns are marked
+        # evidence=false so they can inform the judgement but never support a
+        # quote — the no-quote-no-write rule is unchanged.
+        context: list[dict[str, Any]] = []
+        for ep in all_episodes[max(0, first - CONTEXT_BEFORE):first]:
+            if ep.session == session and clean_turn(ep.text):
+                context.append({"role": ep.role, "evidence": False, "text": clean_turn(ep.text)})
         context.extend({"role": "user", "evidence": True, "episode": ep.id, "text": clean_turn(ep.text)} for ep in users)
+        for ep in all_episodes[last + 1:last + 1 + CONTEXT_AFTER]:
+            if ep.session == session and clean_turn(ep.text):
+                context.append({"role": ep.role, "evidence": False, "text": clean_turn(ep.text)})
 
         candidates: dict[str, Fact] = {}
         for episode in users:
@@ -152,38 +181,55 @@ class Extractor:
 
     def _prompt(self, payload: str) -> tuple[str, str]:
         system = (
-            "You extract durable facts about one user from captured conversation. "
+            "You extract durable memories about one user from captured conversation. "
             "Only user turns marked evidence=true can support a write. Assistant text is context, never evidence. "
             "What counts as a memory: stable identity and background; durable preferences the user wants applied "
             "across future situations (keep the claim SHORT and GENERAL, e.g. 'Gives feedback emails a clear "
             "three-part structure' — never a step-by-step template); ongoing goals and projects; entities "
             "(people/orgs/places/objects) the user will keep caring about; dated events; reusable lessons (case); "
-            "tools and workflows the user actually uses; beliefs and values. "
-            "What does NOT count: one-off task instructions and deliverable specs (checklists for THIS email, doc, "
-            "script or reply), templates, step lists, temporary context, passing opinions, small talk, hypotheticals, "
-            "facts about other people, tool output, and suggestions the user did not adopt. "
-            "The test for every add: would recalling this a month from now in an UNRELATED task be helpful? "
-            "If not, do not store it. When in doubt, return fewer operations. "
-            "Ignore tasks, small talk, passing emotions, hypotheticals, facts about other people, tool output, "
-            "and suggestions the user did not adopt. Claims must be concise English. Quotes must be exact substrings. "
+            "tools and workflows the user actually uses; beliefs and values; and TASKS — work the user hands to a "
+            "later session: a handoff, a plan, a commitment, or a progress snapshot with unfinished steps "
+            "(e.g. '记住现在的进度，明天继续', '接下来先做A再做B', '回头把这个推上去'). "
+            "A task MUST be stored whenever the user passes work to their future self or to you across sessions. "
+            "What does NOT count: step lists and deliverable specs for THIS turn's work product (the checklist for "
+            "the email/doc/script/reply the user wants back right now), templates, passing opinions, small talk, "
+            "hypotheticals, facts about other people, tool output, and suggestions the user did not adopt. "
+            "The distinction: '写一封邮件，主题行…第一段…' specifies the reply you must produce now — drop it. "
+            "'记住进度，明天继续优化X' hands work to a future session — store it as task. "
+            "DURABILITY IS JUDGED PER TYPE, not by one rule: "
+            "for type=task ask 'would this still matter at the START OF THE NEXT SESSION?'; "
+            "for every other type ask 'would recalling this a month from now in an UNRELATED task be helpful?'. "
+            "If the applicable test fails, drop the operation entirely instead of writing durable:false. "
+            "When in doubt, return fewer operations. "
+            "Ignore small talk, passing emotions, hypotheticals, facts about other people, tool output, "
+            "and suggestions the user did not adopt. "
+            "Write each claim as ONE short sentence in the language the owner used in the quoted turn. "
+            "The owner reads these claims back in the dashboard, and a question asked in their own "
+            "language has to match them; translating a Chinese handoff into English makes it unfindable. "
+            "Quotes must be exact substrings. "
+            "For a task, put any stated deadline in the claim text and never treat a soft deadline "
+            "('月底前', 'by Friday') as making the memory invalid. "
             "Use only these operations: add, corroborate, supersede, retract, none. "
             "Return only {\"operations\":[...]}. For add/supersede use type, subject, claim, episode, quote, durable; "
             "supersede also requires fact_id of the prior fact. "
             "For corroborate use fact_id, episode, quote. For retract use fact_id, episode, quote. "
             "Use supersede only for an explicit change and retract only for an explicit correction. "
             "Every operation MUST have an 'op' field, separate from the fact 'type' field. "
-            "On every add set \"durable\": true only if the one-month test passes; if it does not, drop the operation "
-            "entirely instead of writing durable:false. "
-            "Example add: {\"operations\":[{\"op\":\"add\",\"type\":\"preference\","
+            "Example task add: user turn '记住现在的进度，明天继续' → {\"operations\":[{\"op\":\"add\",\"type\":\"task\","
+            "\"subject\":\"work-handoff\",\"claim\":\"Resumes the current work next session; progress recorded\","
+            "\"episode\":\"e1\",\"quote\":\"记住现在的进度，明天继续\",\"durable\":true}]}. "
+            "Example preference add: {\"operations\":[{\"op\":\"add\",\"type\":\"preference\","
             "\"subject\":\"dietary\",\"claim\":\"Does not eat spicy food\","
             "\"episode\":\"e1\",\"quote\":\"I do not eat spicy food\",\"durable\":true}]}. "
             "Example reject: user turn '写一封请同事反馈初稿的邮件，交付可直接复制的邮件：主题行，第一段说明事项在走到哪一步……' "
-            "describes THIS task's deliverable, not a durable preference — return {\"operations\":[]}. "
-            "Allowed fact types are exactly: fact, preference, goal, project, entity, event, case, tool, belief. "
+            "specifies THIS turn's deliverable and hands nothing to a later session — return {\"operations\":[]}. "
+            "Allowed fact types are exactly: fact, preference, goal, project, entity, event, case, tool, belief, task. "
             "Never output constraint. Use preference for habits/needs; fact for biography (job, school, location); "
             "entity for people/orgs/places the user cares about; event for dated occurrences; case for reusable "
             "lessons/patterns; tool for tools/workflows the user uses; belief for values including religion or "
-            "politics (these are stored and marked sensitive automatically — do not omit them). "
+            "politics (these are stored and marked sensitive automatically — do not omit them); task for handoffs, "
+            "plans, commitments and progress snapshots the user expects to pick up later. "
+            "Use goal for what the user wants to become or achieve long-term; use task for what they are doing now. "
             "Use an empty operations array if nothing qualifies."
         )
         return system, payload
@@ -258,15 +304,26 @@ class Extractor:
             pass
 
         if name == "add":
-            if op.get("durable") is False or _one_off_task_spec(episode.text):
+            if op.get("durable") is False:
                 report.skipped += 1
                 return
             try:
-                type_ = FactType(str(op.get("type", "fact")))
+                type_ = FactType(str(op.get("type") or "fact").strip().lower())
             except ValueError as exc:
                 raise StoreError("unknown fact type") from exc
             if type_ == FactType.CONSTRAINT:
                 type_ = FactType.PREFERENCE
+            # Value gate runs AFTER the type is known. Judging the raw text first
+            # made a turn that is both a deliverable spec and a handoff
+            # ("帮我写个交接文档，记住进度明天继续") unreachable: it was dropped as a
+            # one-off before anything could classify it as a task.
+            if type_ == FactType.TASK:
+                if not _is_task_handoff(episode.text):
+                    report.skipped += 1
+                    return
+            elif _is_one_off_spec(episode.text):
+                report.skipped += 1
+                return
             subject = str(op.get("subject", "")).strip()
             claim = str(op.get("claim", "")).strip()
             if not subject or not claim:

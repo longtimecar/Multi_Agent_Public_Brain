@@ -65,6 +65,14 @@ SPECS: tuple[AgentSpec, ...] = (
               paths=("%APPDATA%/@deepseek-ai", "%LOCALAPPDATA%/@deepseek-aidsh-desktop-updater",
                      "~/.deepseek-harness"),
               where="在 DeepSeek Harness 的 设置 → MCP 里新增一个自定义 MCP 服务"),
+    # A separate product whose name merely starts with "DeepSeek". Declaring it
+    # here is what keeps its leftover data directory and uninstall entry from
+    # being reported as the DeepSeek desktop app — the residue guard below skips
+    # registry names claimed by a sibling spec with a longer match token.
+    AgentSpec("deepseek-bot", "DeepSeek Bot", ("deepseek bot", "deepseekbot"),
+              paths=("%APPDATA%/DeepSeek Bot",),
+              needs_uninstaller=True,
+              where="DeepSeek Bot 与 DeepSeek 是两个产品；如需接入请在它自己的设置里添加 MCP 服务"),
     AgentSpec("doubao", "Doubao", ("doubao",),
               paths=("%APPDATA%/Doubao", "~/.doubao"),
               config="~/.doubao/mcp.json", needs_uninstaller=True),
@@ -199,8 +207,19 @@ def _running_images() -> set[str]:
 
 
 def _is_running(spec: AgentSpec, images: set[str]) -> bool:
+    """True when one of THIS product's own processes is running.
+
+    A process name claimed by a sibling spec with a longer token does not count.
+    Without that, a running "deepseek harness.exe" reported the DeepSeek desktop
+    app as installed — the same confusion the uninstall-list guard already
+    handles, arriving through the process table instead.
+    """
+    own = max((len(t) for t in spec.match), default=0)
+    longer = [t for other in SPECS if other is not spec for t in other.match if len(t) > own]
     for image in images:
         base = image[:-4] if image.endswith(".exe") else image
+        if any(t in base for t in longer):
+            continue
         if any(token in base for token in spec.match):
             return True
     return False
@@ -415,15 +434,16 @@ def _others(known: Iterable[AgentSpec], names: Iterable[str]) -> list[str]:
 
 def scan(memory_home: Path, home: Path | None = None, appdata: Path | None = None,
          which: Callable[[str], str | None] = shutil.which, registry: Callable[[], list[str]] = _registry_names,
+         images: Callable[[], set[str]] = _running_images,
          ) -> list[dict[str, Any]]:
     """Report every known agent and anything else that looks like one."""
     home = home or Path.home()
     appdata = appdata or Path(os.environ.get("APPDATA") or home / "AppData" / "Roaming")
     items: list[dict[str, Any]] = []
     names = registry()
-    images = _running_images()
+    running_images = images()
     for spec in SPECS:
-        running = _is_running(spec, images)
+        running = _is_running(spec, running_images)
         installed = running or _installed(spec, home, appdata, which, names)
         items.append({
             "key": spec.key, "name": spec.name, "installed": installed,

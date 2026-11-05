@@ -4,7 +4,7 @@ const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 
 const labels = {
-  type: { preference: '偏好', fact: '事实', goal: '目标', project: '项目', constraint: '约束', entity: '实体', event: '事件', case: '案例', tool: '工具', belief: '信念' },
+  type: { preference: '偏好', fact: '事实', goal: '目标', project: '项目', constraint: '约束', entity: '实体', event: '事件', case: '案例', tool: '工具', belief: '信念', task: '任务' },
   status: { active: '有效', contested: '冲突', superseded: '已替代', retracted: '已撤回' },
 };
 

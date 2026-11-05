@@ -115,10 +115,14 @@ deliberate.
 
 **MCP (portable floor).** Copy `.mcp.json.example` to `.mcp.json` and replace
 `<PROJECT>` with the absolute path of your checkout; point your MCP client at
-that file. Tools: `search_memory`, `write_memory`, `correct_memory`,
-`list_contested`, `get_profile`, `memory_stats`, `find_user_evidence`. Agent
-writes require a captured user episode and an exact quote; `find_user_evidence`
-locates its ID.
+that file. Thirteen tools: `record_user_message`, `search_memory`,
+`find_memory`, `find_user_evidence`, `write_memory`, `correct_memory`,
+`search_archive`, `browse_archive`, `read_archive`, `read_memory_diff`,
+`list_contested`, `get_profile`, `memory_stats`. Agent writes require a captured
+user episode and an exact quote; `find_user_evidence` locates its ID.
+`search_memory` also returns `episodes` — the raw turns behind an answer — and
+`time_window` when your question named a day, so an agent can say where an
+answer came from instead of presenting a transcript fragment as settled memory.
 
 **Hooks (automatic).** `harness/` holds one ready-made hook config per agent.
 The installer fills in your path and copies the config into place:
@@ -144,6 +148,47 @@ OpenCode uses a plugin. Anything without hooks still gets memory through MCP.
 interception. They break on every redesign, violate terms of service at every
 vendor simultaneously, and lose fidelity. Use the official data export for
 backfill instead.
+
+## Capture, tasks and time
+
+Auto-capture tails every known agent's local session store, so writing never
+depends on a model choosing to call a tool. It runs inside the dashboard, or on
+its own:
+
+```bash
+uv run membrain watch --once       # one capture pass, then exit
+uv run membrain watch              # keep capturing in the foreground
+uv run membrain autostart          # install capture-at-login (Windows)
+uv run membrain autostart --remove
+```
+
+Capture is not hosted by the dashboard on purpose: a night with no browser tab
+open used to be a night with no memory.
+
+Captured turns keep the time they were actually said, not the time they were
+scanned, and each one records whether that time is `exact` (read from the
+agent's own log) or `estimated` (the source kept no per-turn time). Turns are
+filed under the operator's calendar day — set `MEMBRAIN_TZ` if the machine's
+timezone is not the one you think in.
+
+That is what makes time-phrased questions answerable:
+
+```bash
+uv run membrain search "我昨晚说今天的任务是什么"
+uv run membrain tasks              # open tasks handed to a later session
+uv run membrain consolidate        # session summaries (derived view, not evidence)
+```
+
+`search_memory` resolves "昨晚 / yesterday / 上周 / 3 days ago" deterministically
+— no model call in the recall path — demotes memories whose evidence falls
+outside that window, and falls back to the raw captured turns when the curated
+facts cannot answer. A question that names a *type* ("我的任务") is answered by
+lookup rather than similarity, because no amount of text overlap connects 任务
+to a claim that says 时间戳修复.
+
+Summaries under `memory/summaries/` are a derived view: they never enter the
+facts index and can never be used as evidence, so a model's restatement cannot
+become a memory.
 
 ## Hygiene
 

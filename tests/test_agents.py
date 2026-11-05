@@ -9,9 +9,12 @@ from membrain import agents
 NO_CMD = lambda _name: None  # noqa: E731
 
 
-def _scan(tmp_path, registry=(), which=NO_CMD):
+def _scan(tmp_path, registry=(), which=NO_CMD, images=()):
+    # `images` is injected so the result never depends on which agent apps
+    # happen to be running on the machine executing the suite.
     return {i["key"]: i for i in agents.scan(tmp_path / "memory", home=tmp_path, appdata=tmp_path / "Roaming",
-                                             which=which, registry=lambda: list(registry))}
+                                             which=which, registry=lambda: list(registry),
+                                             images=lambda: set(images))}
 
 
 def test_scan_reports_installed_state_and_never_marks_missing_agents_connectable(tmp_path):
@@ -134,7 +137,8 @@ def test_marvis_is_detected_but_prompt_only(tmp_path):
     appdata = home / "AppData" / "Roaming"
     (home / ".marvis").mkdir(parents=True)
     items = {i["key"]: i for i in agents.scan(tmp_path / "memory", home=home, appdata=appdata,
-                                              which=lambda c: None, registry=lambda: ["Marvis"])}
+                                              which=lambda c: None, registry=lambda: ["Marvis"],
+                                              images=lambda: set())}
     assert items["marvis"]["installed"] is True
     assert items["marvis"]["can_connect"] is False
     assert items["grok-bot"]["installed"] is False

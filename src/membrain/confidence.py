@@ -28,6 +28,9 @@ BASE: dict[FactType, float] = {
     FactType.CASE: 0.68,
     FactType.TOOL: 0.72,
     FactType.BELIEF: 0.60,
+    # A task is the user's own explicit handoff, so it starts as trustworthy as
+    # a stated tool/preference. Time, not confidence, is what retires it.
+    FactType.TASK: 0.72,
 }
 
 SINGLE_EPISODE_CAP = 0.40

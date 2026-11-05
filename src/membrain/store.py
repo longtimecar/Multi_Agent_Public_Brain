@@ -173,6 +173,7 @@ class Store:
         status = fact.status
         valid_to = fact.valid_to
         reason = fact.retracted_reason
+        closed_at = fact.closed_at
         evidence = list(fact.evidence)
         seen = {item.episode for item in evidence}
         for ev in events:
@@ -200,7 +201,16 @@ class Store:
                 raw = ev.get("valid_to")
                 if raw:
                     valid_to = date.fromisoformat(raw)
-        folded = fact.model_copy(update={"status": status, "valid_to": valid_to, "retracted_reason": reason, "evidence": evidence})
+            elif op == "close":
+                raw = ev.get("closed_at")
+                try:
+                    closed_at = date.fromisoformat(raw) if raw else date.today()
+                except ValueError:
+                    continue
+            elif op == "reopen":
+                closed_at = None
+        folded = fact.model_copy(update={"status": status, "valid_to": valid_to, "retracted_reason": reason,
+                                         "evidence": evidence, "closed_at": closed_at})
         return folded.model_copy(update={"confidence": compute_confidence(folded)})
 
     def apply_ledger(self, fact: Fact) -> Fact:
@@ -231,6 +241,27 @@ class Store:
         if not self.fact_path(fact_id).exists():
             raise StoreError(f"no such fact: {fact_id}")
         self._append_ledger({"op": "retract", "id": fact_id, "reason": reason, "ts": _now().isoformat()})
+
+    def close_task(self, fact_id: str, when: date | None = None) -> None:
+        """Mark a task finished. Append-only: the fact file is never rewritten.
+
+        Closing is an owner decision, never a calendar rule — an unfinished task
+        must not retire just because nobody mentioned it for a while.
+        """
+        fact = self.get_fact(fact_id)
+        if fact.type != FactType.TASK:
+            raise StoreError("only task memories can be closed")
+        if not fact.is_live:
+            raise StoreError("cannot close a non-live fact")
+        self._append_ledger({"op": "close", "id": fact_id,
+                             "closed_at": (when or date.today()).isoformat(), "ts": _now().isoformat()})
+
+    def reopen_task(self, fact_id: str) -> None:
+        """Undo a close, for when the work turns out not to be finished."""
+        fact = self.get_fact(fact_id)
+        if fact.type != FactType.TASK:
+            raise StoreError("only task memories can be reopened")
+        self._append_ledger({"op": "reopen", "id": fact_id, "ts": _now().isoformat()})
 
     def contest(self, fact_ids: list[str], note: str) -> None:
         for fid in fact_ids:
@@ -274,7 +305,10 @@ class Store:
             return []
         by_day: dict[str, list[Episode]] = {}
         for ep in episodes:
-            by_day.setdefault(ep.ts.date().isoformat(), []).append(ep)
+            # Shard by the operator's calendar day, not UTC. A turn spoken at
+            # 07:00 in UTC+8 is 23:00 UTC the previous day; filing it under the
+            # UTC day makes every "昨晚" window look in the wrong file.
+            by_day.setdefault(ep.local_date.isoformat(), []).append(ep)
         written: list[Episode] = []
         for day, batch in by_day.items():
             path = self.episodes_dir / f"{day}.jsonl"

@@ -126,10 +126,14 @@ def test_clearing_the_embedding_key_keeps_the_endpoint(tmp_path):
 # ------------------------------------------------------------------ agents
 
 
-def _scan(tmp_path, registry=(), which=NO_CMD):
+def _scan(tmp_path, registry=(), which=NO_CMD, images=()):
+    # `images` is injected on purpose: without it the scan reads the real process
+    # table, so whether these assertions hold would depend on which agent apps
+    # the owner happened to have open at the time.
     return {i["key"]: i for i in agents.scan(tmp_path / "memory", home=tmp_path,
                                              appdata=tmp_path / "Roaming",
-                                             which=which, registry=lambda: list(registry))}
+                                             which=which, registry=lambda: list(registry),
+                                             images=lambda: set(images))}
 
 
 def test_deepseek_bot_leftover_does_not_fake_deepseek_install(tmp_path):
@@ -144,6 +148,24 @@ def test_deepseek_bot_leftover_does_not_fake_deepseek_install(tmp_path):
     (tmp_path / ".deepseek").mkdir(parents=True)
     items = _scan(tmp_path, registry=["Doubao 5.6.0", "DeepSeek Bot 0.2.3"])
     assert items["deepseek"]["installed"] is True
+
+
+def test_running_harness_does_not_fake_deepseek_install(tmp_path):
+    """A running "DeepSeek Harness" is not the DeepSeek desktop app.
+
+    This is the same confusion as the leftover-directory case, arriving through
+    the process table: it made DeepSeek show as installed on any machine where
+    the owner had the Harness open.
+    """
+    items = _scan(tmp_path, registry=[], images={"deepseek harness.exe"})
+    assert items["deepseek"]["installed"] is False
+    assert items["deepseek-harness"]["installed"] is True
+    assert items["deepseek-harness"]["running"] is True
+
+
+def test_running_grok_bot_does_not_fake_other_products(tmp_path):
+    items = _scan(tmp_path, registry=[], images={"grok bot.exe"})
+    assert items["grok-bot"]["running"] is True
 
 
 def test_a_doubao_data_dir_left_after_uninstall_is_not_installed(tmp_path):

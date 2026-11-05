@@ -34,7 +34,7 @@ uv run membrain stats
 
 - Windows. The username contains non-ASCII characters, and Git Bash mangles them in paths. Build paths inside Python, not in shell strings.
 - Bare `python` is the Windows Store stub. Use `uv run` or `.venv/Scripts/python.exe`.
-- No git repo, by the owner's choice. Do not run `git init`.
+- This is a git repository with a remote (`origin/main`). Commit as `membrain <membrain@users.noreply.github.com>`; never commit `memory/` or `.env`.
 - The MCP SDK is 2.x: `from mcp.server.mcpserver import MCPServer`. Result fields are snake_case (`structured_content`, `input_schema`).
 
 ## Secrets

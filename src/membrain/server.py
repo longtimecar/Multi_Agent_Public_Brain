@@ -54,7 +54,7 @@ decision.
 
 TypeLiteral = Literal[
     "fact", "preference", "goal", "project",
-    "entity", "event", "case", "tool", "belief",
+    "entity", "event", "case", "tool", "belief", "task",
 ]
 
 
@@ -204,6 +204,12 @@ def build_server(service: MemoryService | None = None) -> MCPServer:
             "mode": result.mode,
             "level": result.level,
             "notes": result.notes,
+            # Raw turns behind the answer, and the date window the question
+            # implied. Both are empty in the ordinary case; an agent should say
+            # "来自会话记录" when it answers from `episodes` rather than `entries`.
+            "episodes": result.episode_hits,
+            "time_window": ([result.time_window[0].isoformat(), result.time_window[1].isoformat()]
+                            if result.time_window else None),
             "entries": [
                 {
                     "id": f.id,
@@ -373,7 +379,7 @@ def build_server(service: MemoryService | None = None) -> MCPServer:
                 Evidence(
                     episode=e["episode"],
                     quote=e["quote"],
-                    date=captured[e["episode"]].ts.date(),
+                    date=captured[e["episode"]].local_date,
                     origin="stated",
                 )
                 for e in evidence
@@ -435,7 +441,7 @@ def build_server(service: MemoryService | None = None) -> MCPServer:
                 Evidence(
                     episode=correction_episode.id,
                     quote=reason,
-                    date=correction_episode.ts.date(),
+                    date=correction_episode.local_date,
                     origin="stated",
                 )
             ]

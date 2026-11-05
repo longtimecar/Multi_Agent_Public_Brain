@@ -71,7 +71,7 @@
 | LLM 调用 | **urllib 直连**（OpenAI / Anthropic 两种格式） | 不引入重 SDK；两种协议差异集中在 `llm.py` 一个文件里 |
 | 前端 | **原生 HTML/JS/CSS，无框架** | Dashboard 是本地单页工具，无构建步骤、无 node_modules |
 | 包管理 | **uv + hatchling** | 快、锁定 `uv.lock`、sdist 打包清单严格控制隐私 |
-| 测试 | **pytest** | 212 个用例，全部离线（LLM 用 FakeLLMClient 脚本化） |
+| 测试 | **pytest** | 269 个用例，全部离线（LLM 用 FakeLLMClient 脚本化） |
 
 也有刻意不用的东西：Web 框架（标准库 `http.server` 够用）、ORM（文件才是事实来源）、
 前端框架（不想引入构建链）、向量数据库（SQLite + NumPy 在当前规模下够了）。
@@ -101,6 +101,10 @@ membrain-app/
 │   ├── session_import.py    # 历史会话导入（LLM 清洗提炼，噪声丢弃）
 │   ├── session_archive.py   # 会话归档与 memory_diff
 │   ├── auto_commit.py       # 空闲时自动归档
+│   ├── watcher.py           # 后台自动捕获：轮询各 Agent 本地会话库（可独立于 dashboard 运行）
+│   ├── consolidate.py       # 会话摘要 memory/summaries/*.md（派生视图，永不作为证据）
+│   ├── rag.py               # 资料库真 RAG：解析→分块→LLM 摘要→向量化→混合检索
+│   ├── openviking_import.py # 可选的 OpenViking 历史数据导入（不设置根目录绝不扫描）
 │   ├── budget.py            # token 预算估算（注入量控制）
 │   ├── injection.py         # 注入格式化
 │   ├── context_pack.py      # context 模式的类型配额打包
@@ -111,7 +115,7 @@ membrain-app/
 │   ├── config.py            # 全部环境变量解析（.env 优先级低于真实环境变量）
 │   ├── locking.py           # 跨进程文件锁
 │   └── web/                 # Dashboard 前端三件套（index.html / app.js / styles.css，原生 JS）
-├── tests/                   # pytest 套件（212 用例）+ fixtures/recall_pairs.json（召回黄金样例）
+├── tests/                   # pytest 套件（269 用例）+ fixtures/recall_pairs.json（召回黄金样例）
 ├── scripts/
 │   ├── hook.py              # hooks 垫片（Agent 配置指向它，它转发给 CLI；相对仓库定位 MEMBRAIN_HOME）
 │   ├── calibrate.py         # 召回质量校准 + 基线对比（--update-baseline / --strict）
@@ -248,7 +252,7 @@ cp .env.example .env
 # 换 embedding 模型后记得：uv run membrain reindex
 
 # 5. 启动 Dashboard（浏览器自动打开）
-uv run membrain dashboard --port 1971
+uv run membrain dashboard --port 1966
 
 # 6. 验证
 uv run membrain stats        # 报告配置来源与统计，不打印任何密钥
@@ -272,7 +276,7 @@ uv run python scripts/calibrate.py --strict --update-baseline
 ## 7. 测试与质量保障
 
 ```bash
-uv run pytest -q                   # 212 个离线用例（无网络、LLM 用 Fake 脚本化）
+uv run pytest -q                   # 269 个离线用例（无网络、LLM 用 Fake 脚本化）
 uv run python scripts/calibrate.py # 召回质量回归（82 组中英文黄金样例 + 硬负例）
 ```
 
@@ -471,5 +475,5 @@ stateDiagram-v2
 
 ---
 
-*文档对应代码版本 `ba84a10`（2026-11-04）。发现文档和代码对不上时，以代码为准，
-欢迎顺手修文档。*
+*文档对应代码版本 `5063544` 之后的时间感知/任务记忆改造（2026-11-05）。发现文档和代码
+对不上时，以代码为准，欢迎顺手修文档。*

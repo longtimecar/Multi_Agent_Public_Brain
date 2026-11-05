@@ -161,8 +161,15 @@ class HealthScanner:
         for fact in facts:
             if fact.type in _NEVER_FORGET_TYPES or fact.sensitive:
                 continue
+            # Unfinished work is not clutter. A task retires when the owner says
+            # it is done (closed_at), never because the calendar ran out —
+            # otherwise "记住进度，明天继续" decays exactly while it still matters.
+            if fact.is_open_task:
+                continue
             days = self._since_use(fact)
-            low_value = fact.confidence < _STALE_MAX_CONFIDENCE or fact.type in _EPHEMERAL_TYPES
+            low_value = (fact.confidence < _STALE_MAX_CONFIDENCE
+                         or fact.type in _EPHEMERAL_TYPES
+                         or fact.type == FactType.TASK)
             if days <= _FORGET_DAYS or not low_value:
                 continue
             findings.append(Finding(

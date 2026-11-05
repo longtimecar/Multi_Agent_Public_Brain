@@ -55,6 +55,49 @@ with a disposable memory directory before relying on it for important data.
 - Optional intent, rerank and evolution features remain off by default.
 - OpenViking is an optional legacy source, not the storage backend.
 
+## Current work
+
+Done on 2026-11-05, after the owner reported that "记住现在的进度，明天继续"
+could not be asked back the next day. All four layers of that failure are
+closed, and `tests/test_temporal_recall.py` pins each one:
+
+1. **Time is real.** Session parsers keep each turn's own timestamp (per-turn
+   where the source has one, session-level otherwise); `Episode.ts_source`
+   records `exact` vs `estimated` and defaults to `estimated`, so a capture path
+   that forgets to declare accuracy cannot claim precision. Naive timestamps are
+   rejected. Episodes are filed under the operator's calendar day
+   (`MEMBRAIN_TZ`), which is what stops a one-day-wide "昨晚" window from
+   missing by a whole day in UTC+8.
+2. **Tasks are stored.** `FactType.TASK` is wired through the type tables, the
+   extraction prompt no longer says `Ignore tasks`, and durability is judged per
+   type: "would this matter at the start of the next session" for tasks,
+   "a month from now in an unrelated task" for everything else. The one-off-spec
+   gate now runs *after* the type is known, so a turn that is both a deliverable
+   spec and a handoff survives. Claims are written in the owner's language —
+   an English claim could not be found by a Chinese question.
+3. **Ingestion standards agree across paths.** Extraction, MCP writes, session
+   import distillation and the dashboard admin loop were each applying a
+   different bar; session import was the strictest and explicitly dropped task
+   status. They now share the same per-type durability rule.
+4. **Recall reads time and falls back.** `parse_time_window` resolves coarse
+   phrases deterministically (no model in the hot path). Out-of-window evidence
+   is demoted, never hard-filtered. Episodes have their own FTS index plus a CJK
+   term scan, because unicode61 treats a whole Chinese run as one token. When
+   curated facts cannot answer, raw turns are returned and labelled as such.
+   `membrain tasks` lists open tasks; `Fact.closed_at` plus a ledger `close`
+   event retires finished work, and an open task is never a forget candidate.
+5. **Capture does not need the dashboard.** `membrain watch` runs the loop in
+   the foreground and `membrain autostart` installs it at login.
+6. **Session summaries.** `membrain consolidate` writes
+   `memory/summaries/*.md` (done / decided / open) with pointers back to its
+   episodes. Derived view only: never indexed as facts, never evidence.
+
+Also fixed: `agents._is_running` matched process names by substring, so a
+running `deepseek harness.exe` reported the DeepSeek desktop app as installed —
+the same confusion the uninstall-list guard already handled. `scan` now takes an
+injectable process list, so those tests no longer depend on what the owner
+happens to have open.
+
 ## Next work
 
 - Add adapters for additional local agent histories where the format is stable.

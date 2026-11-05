@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 import re
@@ -26,17 +27,46 @@ from .budget import estimate_tokens
 from .config import Settings
 from .confidence import is_promoted, render_hedged
 from .embeddings import Embedder, EmbeddingError
-from .index import Index, Hit
-from .models import Fact, FactType, Status
+from .index import Index, Hit, _match_terms
+from .models import Episode, Fact, FactType, Status
 from .overview import build_l1_overviews, looks_sensitive, make_abstract, render_l1_block
 from .peer import peer_allows
 from .search_mode import MODE_CONTEXT, normalize_mode, resolve_intent_rerank
 from .store import Store
+from .text import clean_turn, parse_time_window
 from .uri import uri_matches_scope
 
 RRF_K = 60
 CANDIDATES = 50
 DEFAULT_TOP_K = 8
+# Below this many curated hits, recall also reads the raw transcript. Two rather
+# than one: a single fact is often the wrong one, and the point of the fallback
+# is to catch the case where extraction missed the turn entirely.
+EPISODE_FALLBACK_BELOW = 2
+# Texts per embedding request. A whole-store batch exceeds the read timeout on
+# real endpoints; this size was verified against the owner's own 221 live facts.
+EMBED_BATCH = 16
+# CJK substring matches are not bm25 scores, so they get their own scale. Only
+# the order of lexical scores feeds RRF, not their magnitude, so this weight
+# decides where CJK matches sit among the FTS matches — above them, because
+# when the question is Chinese the FTS match is the meaningless one.
+CJK_LEXICAL_WEIGHT = 1e-3
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+# Above the CJK weight: a question that names a type and a day has an exact
+# answer, and it should outrank anything found by fuzzy text overlap.
+TYPE_WINDOW_WEIGHT = 1e-2
+_TASK_QUESTION = re.compile(
+    r"任务|待办|要做的事|该做什么|下一步做什么|还有什么没|没做完|"
+    r"todo|to-do|my tasks?|what .{0,16}task|open (?:tasks|items)",
+    re.IGNORECASE,
+)
+
+
+def _asked_type(query: str) -> FactType | None:
+    """The memory type a question is asking ABOUT, as opposed to its topic."""
+    if _TASK_QUESTION.search(query or ""):
+        return FactType.TASK
+    return None
 
 
 def _overview_scope(query: str) -> str | None:
@@ -77,6 +107,11 @@ class RecallResult:
     mode: str
     notes: list[str] = field(default_factory=list)
     level: int = 2
+    # Raw captured turns that matched when curated facts came up thin. Labelled
+    # so the caller can say where the answer came from instead of presenting a
+    # transcript fragment as a settled memory.
+    episode_hits: list[dict] = field(default_factory=list)
+    time_window: tuple[date, date] | None = None
 
 
 class Retriever:
@@ -166,17 +201,36 @@ class Retriever:
                 to_embed.append((fact, f"{fact.subject}\n{fact.claim}"))
         embedded = 0
         if self.embedder.enabled and to_embed:
-            try:
-                matrix = self.embedder.embed([t for _, t in to_embed])
-                if matrix is not None:
-                    self.index.claim_model(self.embedder.model)  # reset() cleared any old claim
-                    for (fact, _), vec in zip(to_embed, matrix):
-                        self.index.put_vector(fact.id, vec)
-                    embedded = len(to_embed)
-            except EmbeddingError:
-                pass  # lexical-only index is still a working index
+            # One request for the whole store times out on a real endpoint: 221
+            # facts exceeded the read timeout while batches of 16 were fine, and
+            # the EmbeddingError was swallowed — leaving the index silently
+            # lexical-only with no signal anywhere. Chunk it and keep whatever
+            # succeeds, so a slow endpoint degrades instead of emptying.
+            for start in range(0, len(to_embed), EMBED_BATCH):
+                chunk = to_embed[start:start + EMBED_BATCH]
+                try:
+                    matrix = self.embedder.embed([t for _, t in chunk])
+                except EmbeddingError:
+                    continue  # lexical-only index is still a working index
+                if matrix is None:
+                    continue
+                self.index.claim_model(self.embedder.model)  # reset() cleared any old claim
+                for (fact, _), vec in zip(chunk, matrix):
+                    self.index.put_vector(fact.id, vec)
+                embedded += len(chunk)
+        episodes = self.sync_episodes(self.store.iter_episodes())
         self.index.commit()
-        return {"facts": len(facts), "embedded": embedded}
+        return {"facts": len(facts), "embedded": embedded, "episodes": episodes}
+
+    def sync_episodes(self, episodes: Iterable[Episode]) -> int:
+        """Index raw turns so recall can fall back to what was actually said."""
+        count = 0
+        for ep in episodes:
+            self.index.upsert_episode(ep)
+            count += 1
+        if count:
+            self.index.commit()
+        return count
 
     def sync_fact(self, fact: Fact) -> None:
         """Index a single fact after a write, keeping the index warm."""
@@ -227,7 +281,8 @@ class Retriever:
 
     # -------------------------------------------------------------- retrieval
 
-    def _candidates(self, query: str, live: dict[str, Fact]) -> tuple[dict[str, Hit], str, list[str]]:
+    def _candidates(self, query: str, live: dict[str, Fact],
+                    time_window: tuple[date, date] | None = None) -> tuple[dict[str, Hit], str, list[str]]:
         notes: list[str] = []
         got: dict[str, Hit] = {}
 
@@ -235,6 +290,21 @@ class Retriever:
         for fid, score in lex.items():
             if fid in live:
                 got[fid] = Hit(fact=live[fid], lexical=score)
+
+        for fid, score in self._cjk_lexical(query, live).items():
+            hit = got.get(fid)
+            if hit is None:
+                got[fid] = Hit(fact=live[fid], lexical=score)
+            else:
+                hit.lexical = max(hit.lexical, score)
+
+        typed = self._typed_window_hits(query, live, time_window)
+        for fid, score in typed.items():
+            hit = got.get(fid)
+            if hit is None:
+                got[fid] = Hit(fact=live[fid], lexical=score)
+            else:
+                hit.lexical = max(hit.lexical, score)
 
         mode = "lexical"
         if self.embedder.enabled:
@@ -254,6 +324,14 @@ class Retriever:
                     # vector retain lexical fallback.
                     scores = {fid: float(sims[i]) for i, fid in enumerate(ids)}
                     for fid in list(got):
+                        if fid in typed:
+                            # A type+day match is a structured answer, not a
+                            # similarity claim. Vetoing it on cosine made the
+                            # result depend on which language the extractor
+                            # happened to phrase the claim in: a Chinese question
+                            # about an English claim scored under the floor and
+                            # the correct task disappeared.
+                            continue
                         if fid in scores and not scores[fid] >= self.settings.semantic_floor:
                             del got[fid]
                     keep = min(CANDIDATES, len(ids))
@@ -272,7 +350,7 @@ class Retriever:
             notes.append("no embedding endpoint configured; lexical only")
         return got, mode, notes
 
-    def _rank(self, hits: dict[str, Hit]) -> list[Hit]:
+    def _rank(self, hits: dict[str, Hit], time_window: tuple[date, date] | None = None) -> list[Hit]:
         lex_order = sorted(hits.values(), key=lambda h: h.lexical, reverse=True)
         sem_order = sorted(hits.values(), key=lambda h: h.semantic, reverse=True)
         rrf: dict[str, float] = {}
@@ -282,12 +360,124 @@ class Retriever:
         for rank, hit in enumerate(sem_order):
             if hit.semantic > 0:
                 rrf[hit.fact.id] = rrf.get(hit.fact.id, 0.0) + 1.0 / (RRF_K + rank + 1)
-        # Relevance decides the order; confidence and recency only break ties.
-        def key(hit: Hit) -> tuple[float, float, float]:
+
+        def in_window(hit: Hit) -> float:
+            """1.0 when some evidence date falls inside the asked-about window.
+
+            A demotion, never a hard filter: a fact stated earlier can still be
+            the right answer to "昨晚说的", and dropping it outright would repeat
+            the mistake of auto-invalidating on weak signals.
+            """
+            if time_window is None:
+                return 1.0
+            lo, hi = time_window
+            dates = [e.date for e in hit.fact.evidence] or [hit.fact.valid_from]
+            return 1.0 if any(lo <= d <= hi for d in dates) else 0.0
+
+        # Relevance decides the order; time match, confidence and recency break ties.
+        def key(hit: Hit) -> tuple[float, float, float, float]:
             age_days = max(0, (date.today() - hit.fact.valid_from).days)
-            return (round(rrf.get(hit.fact.id, 0.0), 9), hit.fact.confidence, -age_days)
+            return (round(rrf.get(hit.fact.id, 0.0), 9), in_window(hit), hit.fact.confidence, -age_days)
 
         return sorted(hits.values(), key=key, reverse=True)
+
+    def _cjk_lexical(self, query: str, live: dict[str, Fact]) -> dict[str, float]:
+        """Substring scoring for CJK queries, which FTS5 cannot match.
+
+        unicode61 treats a whole CJK run as a single token, so a Chinese
+        question never matches a Chinese quote token-wise and recall came back
+        empty even when the memory was there. Scanning the curated facts is
+        bounded by the fact count, not by the transcript, so it stays cheap.
+        """
+        terms = [t for t in _match_terms(query) if _CJK_RE.search(t)]
+        if not terms:
+            return {}
+        out: dict[str, float] = {}
+        for fid, fact in live.items():
+            haystack = " ".join([fact.claim, fact.subject,
+                                 *(e.quote for e in fact.evidence)]).casefold()
+            hits = sum(1 for t in terms if t in haystack)
+            if hits:
+                out[fid] = CJK_LEXICAL_WEIGHT * hits / len(terms)
+        return out
+
+    def _typed_window_hits(self, query: str, live: dict[str, Fact],
+                           time_window: tuple[date, date] | None) -> dict[str, float]:
+        """Facts matching the question's TYPE and day, regardless of wording.
+
+        "我昨晚说的任务是什么" names a type and a date, not a topic. No amount of
+        text similarity connects 任务 to a claim that says 时间戳修复, so leaving
+        this to embeddings made the answer depend on which words the extractor
+        happened to choose. It is a structured lookup.
+        """
+        wanted = _asked_type(query)
+        if wanted is None:
+            return {}
+        out: dict[str, float] = {}
+        for fid, fact in live.items():
+            if fact.type != wanted:
+                continue
+            if wanted == FactType.TASK and fact.closed_at is not None:
+                continue  # finished work is not an answer to "what is my task"
+            if time_window is not None:
+                lo, hi = time_window
+                dates = [e.date for e in fact.evidence] or [fact.valid_from]
+                if not any(lo <= d <= hi for d in dates):
+                    continue
+            out[fid] = TYPE_WINDOW_WEIGHT
+        return out
+
+    def _needs_episode_fallback(self, chosen: list[Fact],
+                                time_window: tuple[date, date] | None) -> bool:
+        """True when curated facts cannot answer, so raw turns are worth reading."""
+        if not chosen:
+            return True
+        if time_window is None:
+            return len(chosen) < EPISODE_FALLBACK_BELOW
+        lo, hi = time_window
+        return not any(
+            lo <= d <= hi
+            for fact in chosen
+            for d in ([e.date for e in fact.evidence] or [fact.valid_from])
+        )
+
+    def _episode_fallback(self, query: str, time_window: tuple[date, date] | None,
+                          limit: int = 5) -> list[dict]:
+        """Raw captured turns matching the query, newest first.
+
+        Curated facts are a lossy summary of what was said. When they come up
+        thin the transcript still answers "what did I say last night", so recall
+        reads it instead of returning nothing.
+        """
+        start, end = time_window if time_window else (None, None)
+        try:
+            rows = self.index.search_episodes(query, start=start, end=end, limit=limit * 3)
+        except Exception:
+            return []
+        out: list[dict] = []
+        for row in rows:
+            text = clean_turn(row.get("text") or "")
+            if not text:
+                continue
+            if self._episode_agent_hidden(row.get("agent") or ""):
+                continue
+            out.append({**row, "text": text[:300]})
+            if len(out) >= limit:
+                break
+        return out
+
+    def _episode_agent_hidden(self, agent: str) -> bool:
+        """Turns from a disconnected agent stay hidden, same as its facts."""
+        if not agent or not self.disabled_agents:
+            return False
+        low = agent.casefold()
+        return any(low == d.casefold() or low.startswith(d.casefold()) for d in self.disabled_agents)
+
+    def open_tasks(self, limit: int = 20) -> list[Fact]:
+        """Tasks the owner has not said are finished, most recently stated first."""
+        tasks = [f for f in self.store.live_facts() if f.is_open_task]
+        tasks.sort(key=lambda f: f.valid_from, reverse=True)
+        return tasks[:limit]
 
     def recall(
         self,
@@ -312,6 +502,9 @@ class Retriever:
     ) -> RecallResult:
         budget = budget if budget is not None else self.settings.turn_token_budget
         level = 0 if level <= 0 else (1 if level == 1 else 2)
+        # "我昨晚说的" is a date question, not a similarity question. Parsing it
+        # deterministically keeps the recall hot path free of model calls.
+        time_window = parse_time_window(query)
         search_mode = normalize_mode(mode)
         use_intent, use_rerank, mode_notes = resolve_intent_rerank(
             search_mode,
@@ -387,7 +580,7 @@ class Retriever:
                 merged: dict[str, Hit] = {}
                 mode_name = "lexical"
                 for pq in planned_queries:
-                    hits, mode_name, cand_notes = self._candidates(pq, live)
+                    hits, mode_name, cand_notes = self._candidates(pq, live, time_window)
                     notes = notes + cand_notes
                     for fid, hit in hits.items():
                         prev = merged.get(fid)
@@ -396,7 +589,7 @@ class Retriever:
                         else:
                             prev.lexical = max(prev.lexical, hit.lexical)
                             prev.semantic = max(prev.semantic, hit.semantic)
-                ranked = self._rank(merged)
+                ranked = self._rank(merged, time_window)
                 if exclude_ids:
                     ranked = [h for h in ranked if h.fact.id not in exclude_ids]
                 scored = []
@@ -465,7 +658,7 @@ class Retriever:
             merged: dict[str, Hit] = {}
             mode = "lexical"
             for pq in planned_queries:
-                hits, mode, cand_notes = self._candidates(pq, live)
+                hits, mode, cand_notes = self._candidates(pq, live, time_window)
                 notes = notes + cand_notes
                 for fid, hit in hits.items():
                     prev = merged.get(fid)
@@ -474,7 +667,7 @@ class Retriever:
                     else:
                         prev.lexical = max(prev.lexical, hit.lexical)
                         prev.semantic = max(prev.semantic, hit.semantic)
-            ranked = self._rank(merged)
+            ranked = self._rank(merged, time_window)
             # Gap 3: optional L0 rerank (fail-open). Fetch 2× then cut.
             if use_rerank and ranked:
                 try:
@@ -549,6 +742,16 @@ class Retriever:
             out_mode = f"quick:{mode}"
         elif search_mode == "thinking" and mode not in {"intent-skip", "overview", "overview-l1"}:
             out_mode = f"thinking:{mode}"
+        # When the curated layer has nothing usable, read what was actually
+        # said. "Usable" means: some hit, and — if the question named a time —
+        # a hit whose evidence falls in that window. A correct fact from the
+        # asked-about day is a complete answer; dumping loosely-matching raw
+        # turns next to it only invites the reader to answer from the wrong one.
+        episode_hits: list[dict] = []
+        if self._needs_episode_fallback(chosen, time_window):
+            episode_hits = self._episode_fallback(query, time_window)
+            if episode_hits:
+                notes.append("来自会话记录（记忆条目不足，已回看原始对话）")
         return RecallResult(
             hits=chosen,
             text=text,
@@ -556,6 +759,8 @@ class Retriever:
             mode=out_mode,
             notes=notes,
             level=level,
+            episode_hits=episode_hits,
+            time_window=time_window,
         )
 
     def contested(self) -> list[Fact]:
