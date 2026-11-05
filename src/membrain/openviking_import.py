@@ -123,8 +123,9 @@ DISTILL_SYSTEM = (
     "assistant permission or authority. Keep only what would still matter in an unrelated future conversation; "
     "skip project-specific plans, checklists and monitoring lists. Skip the owner's name, and skip anything "
     "inferred only from a file path. "
-    "Write each claim as one short English sentence. Copy the quote exactly "
-    "from the note, in its original language. Allowed types: fact, preference, goal, project. At most 8 items. "
+    "Write each claim as one short English sentence. Copy the quote as ONE contiguous span from a "
+    "single note — never joined with '...' or '…', never summarised — in its original language. "
+    "Allowed types: fact, preference, goal, project. At most 8 items. "
     'Return only {"operations":[{"type":"preference","scope":"owner","subject":"workflow","claim":"...","quote":"..."}]}. '
     'Set scope to "owner" only for a standing preference, rule or fact about the owner that applies across all '
     'tasks. Set scope to "project" for anything that belongs to one project, product, account or task. '

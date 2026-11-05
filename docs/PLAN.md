@@ -98,6 +98,27 @@ the same confusion the uninstall-list guard already handled. `scan` now takes an
 injectable process list, so those tests no longer depend on what the owner
 happens to have open.
 
+Also fixed: `agents._is_running` matched process names by substring, so a
+running `deepseek harness.exe` reported the DeepSeek desktop app as installed;
+`scan` now takes an injectable process list, so those tests no longer depend on
+what the owner happens to have open.
+
+7. **The pipeline stalls were the real reason a day produced nothing.** Capture
+   was fine for Claude Code, Codex, WorkBuddy and the Harness, but Qoder read
+   the wrong directory entirely (`%APPDATA%/Qoder/User/workspaceStorage`) while
+   its transcripts live in `~/.qoder-cn/projects/*/*.jsonl`, so a live Qoder
+   conversation produced zero turns. Downstream, four separate faults each
+   stopped extraction: losing `extraction.lock` raised and killed the run
+   instead of skipping; sessions were walked in path order, so a September
+   conversation was examined before last night's handoff; one rejected
+   operation discarded every later operation in the same batch and left the
+   session unmarked, so it replayed and failed identically forever; and models
+   cite a long turn as "start…middle", which verbatim validation read as
+   fabrication. Evidence now requires every cited fragment to appear in order in
+   the user's own turn and records the longest of them as it really stands in
+   storage, retries are capped, and passes take the newest sessions first in a
+   bounded batch.
+
 ## Next work
 
 - Add adapters for additional local agent histories where the format is stable.

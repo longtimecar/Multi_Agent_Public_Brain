@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -190,3 +190,156 @@ def test_missing_operation_name_does_not_advance_state(extractor):
     report, _ = run_extractor(store, retriever, [{"operations": [{"op": "add", "type": "preference",
         "subject": "drink", "claim": "Likes tea", "episode": "u1", "quote": "I like tea."}]}])
     assert report.facts_added == 1
+
+
+def test_second_extractor_defers_instead_of_crashing(extractor, tmp_path):
+    """Losing the lock used to raise TimeoutError and kill the run.
+
+    With two dashboards running, that happened every cycle: the backlog never
+    moved and the only trace was a traceback in a log nobody opens. A pass that
+    finds the lock held should say so and do nothing, not fail.
+    """
+    from membrain.llm import FakeLLMClient
+    from membrain.locking import try_lock
+
+    _, store, _, retriever = extractor
+    store.append_episodes([episode("e1", "user", "记住现在的进度，明天继续")])
+    lock = store.home / ".state" / "extraction.lock"
+    with try_lock(lock) as held:
+        assert held is True, "the lock helper itself must work"
+        report = Extractor(store, retriever, FakeLLMClient([{"operations": []}])).run()
+    assert report.deferred is True
+    assert report.facts_added == 0 and not report.errors
+    assert "另一个提炼" in report.note
+
+
+def test_extraction_runs_the_newest_conversation_first(extractor):
+    """Path order let a September conversation starve last night's handoff."""
+    from membrain.llm import FakeLLMClient
+
+    _, store, _, retriever = extractor
+    old = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    recent = datetime(2026, 11, 4, 22, 15, tzinfo=timezone.utc)
+    store.append_episodes([
+        Episode(id="o1", ts=old, session="old-session", agent="codex", role="user",
+                text="很久以前的一句话"),
+        Episode(id="n1", ts=recent, session="new-session", agent="codex", role="user",
+                text="记住现在的进度，明天继续"),
+    ])
+    asked: list[list] = []
+
+    class Spy:
+        def complete_json(self, system, payload):
+            asked.append(json.loads(payload))
+            return {"operations": []}
+
+    report = Extractor(store, retriever, Spy()).run()
+    assert report.sessions == 2, report.sessions
+    first = asked[0]["turns"][0]["text"]
+    assert "记住现在的进度" in first, f"newest session should run first, got {first[:40]}"
+
+
+def test_extraction_bounds_the_batch_and_reports_the_backlog(extractor, monkeypatch):
+    """A pass must finish, and say how much is left, instead of swallowing all."""
+    from membrain.llm import FakeLLMClient
+
+    monkeypatch.setenv("MEMBRAIN_EXTRACT_SESSIONS", "2")
+    _, store, _, retriever = extractor
+    base = datetime(2026, 11, 1, tzinfo=timezone.utc)
+    for i in range(5):
+        store.append_episodes([
+            Episode(id=f"e{i}", ts=base + timedelta(days=i), session=f"s{i}", agent="codex",
+                    role="user", text=f"第 {i} 个会话的进度，明天继续"),
+        ])
+    report = Extractor(store, retriever,
+                       FakeLLMClient([{"operations": []}, {"operations": []}])).run()
+    assert report.sessions == 2, report.sessions
+    assert report.remaining == 3, report.remaining
+
+
+def test_one_rejected_operation_no_longer_discards_the_others(extractor):
+    """A bad quote used to raise out of the loop, so every valid operation after
+    it in the same batch was thrown away with it.
+    """
+    from membrain.llm import FakeLLMClient
+
+    _, store, _, retriever = extractor
+    store.append_episodes([
+        episode("e1", "user", "记住现在的进度，明天继续"),
+        episode("e2", "user", "我不吃辣"),
+    ])
+    batch = {"operations": [
+        {"op": "add", "type": "fact", "subject": "x", "claim": "Fabricated",
+         "episode": "e1", "quote": "我从来没说过的话", "durable": True},
+        {"op": "add", "type": "task", "subject": "work-handoff", "claim": "Resumes next session",
+         "episode": "e1", "quote": "记住现在的进度，明天继续", "durable": True},
+    ]}
+    report = Extractor(store, retriever, FakeLLMClient([batch])).run()
+    assert report.rejected == 1, report.errors
+    assert report.facts_added == 1, "the valid operation must survive"
+    assert any(f.type == FactType.TASK for f in store.live_facts())
+
+
+def test_rejected_sessions_are_retried_then_left_alone(extractor):
+    """Retrying is useful once, pointless forever.
+
+    The model may paraphrase a quote on one pass and copy it verbatim on the
+    next, so a rejection keeps the session pending. But without a cap, a
+    conversation that reliably trips a rule is replayed on every single pass,
+    spending a model call each time and never advancing.
+    """
+    from membrain.extract import MAX_RETRIES
+    from membrain.llm import FakeLLMClient
+
+    _, store, _, retriever = extractor
+    store.append_episodes([episode("e1", "user", "记住现在的进度，明天继续")])
+    always_bad = {"operations": [
+        {"op": "add", "type": "fact", "subject": "x", "claim": "Fabricated",
+         "episode": "e1", "quote": "我从来没说过的话", "durable": True}]}
+
+    for _ in range(MAX_RETRIES):
+        Extractor(store, retriever, FakeLLMClient([always_bad])).run()
+
+    # The cap marks it handled, so the pipeline stops replaying it.
+    final = Extractor(store, retriever, FakeLLMClient([always_bad])).run()
+    assert final.sessions == 0, "session must stop being retried after the cap"
+    assert store.live_facts() == [], "nothing was written from the rejected operations"
+
+
+def test_locate_quote_tolerates_reflow_but_not_invention():
+    """A quote must be the user's words, not their exact line breaks.
+
+    Exact substring matching threw away valid memories because the model copied
+    a span and re-wrapped it. Tolerance is on whitespace only: every token still
+    has to appear, in order, in what the user typed.
+    """
+    from membrain.extract import locate_quote
+
+    text = "自动 捕获根本就是失效的，一条11月5号的记忆都没有。\n\n附件引用：\n- 文件：x"
+    assert locate_quote(text, "自动 捕获根本就是失效的") == "自动 捕获根本就是失效的"
+    # The model collapsed the double space and the newlines into one space.
+    assert locate_quote(text, "自动 捕获根本就是失效的，一条11月5号的记忆都没有。 附件引用： - 文件：x")
+    # Invention and reordering still fail.
+    assert locate_quote(text, "我从来没说过这句话") is None
+    assert locate_quote(text, "记忆都没有 一条11月5号的") is None
+    assert locate_quote(text, "   ") is None
+    assert locate_quote(text, "") is None
+
+
+def test_locate_quote_accepts_ellipsis_citation_by_recording_a_real_span():
+    """Models cite a long turn as "开头…中间…". Instructing them not to does not
+    hold, so each fragment must appear in order in the user's own words and the
+    recorded evidence becomes the longest fragment exactly as stored.
+    """
+    from membrain.extract import locate_quote
+
+    text = "先备份要改的文件，改动前把差异给我看。\n\n添加后确认它显示为已连接。然后把规则加入长期指令。"
+    found = locate_quote(text, "先备份要改的文件...添加后确认它显示为已连接")
+    assert found is not None
+    assert found in text, "what is recorded must itself be a verbatim contiguous span"
+    assert found == "添加后确认它显示为已连接"
+
+    # One invented fragment anywhere in the citation fails the whole thing.
+    assert locate_quote(text, "先备份要改的文件...我从来没说过的话") is None
+    # Fragments that exist but not in this order do not pass.
+    assert locate_quote(text, "然后把规则加入长期指令...先备份要改的文件") is None

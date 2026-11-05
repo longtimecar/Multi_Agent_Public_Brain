@@ -9,6 +9,47 @@ from typing import Iterator
 
 
 @contextmanager
+def try_lock(path: Path) -> Iterator[bool]:
+    """Take the lock without waiting; yield True only when it is ours.
+
+    A second extractor has nothing useful to do — the first is already covering
+    the same work. Waiting 30 seconds and then raising killed the run and left
+    nothing but a traceback in a log file nobody opens, which is how a backlog
+    of hundreds of turns quietly stopped ever being processed.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fh = open(path, "a+b")
+    except OSError:
+        yield False
+        return
+    acquired = False
+    with fh:
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                fh.seek(0)
+                msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            acquired = True
+        except OSError:
+            acquired = False
+        try:
+            yield acquired
+        finally:
+            if acquired:
+                if os.name == "nt":
+                    fh.seek(0)
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
 def file_lock(path: Path, timeout: float = 30.0) -> Iterator[None]:
     path.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + timeout

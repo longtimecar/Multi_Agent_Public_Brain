@@ -623,8 +623,81 @@ def _collect_trae() -> list[RawSession]:
     return [s for s in _collect_vscode_family() if s.source == "trae"]
 
 
+_QODER_HOME_FOLDERS = (".qoder-cn", ".qoder")
+
+
+def _parse_qoder(path: Path) -> list[ParsedTurn]:
+    """Qoder transcripts: Claude-shaped records that also say who typed them.
+
+    Most `type: user` records here are tool results flowing back into the
+    conversation, not the owner speaking. Only `origin.kind == "human"` is the
+    owner's own typed text, and evidence must be exactly that — capturing the
+    rest would let model output become memory evidence.
+    """
+    turns: list[ParsedTurn] = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(rec, dict) or rec.get("isSidechain"):
+            continue
+        kind = rec.get("type")
+        if kind == "user":
+            origin = rec.get("origin")
+            if not (isinstance(origin, dict) and origin.get("kind") == "human"):
+                continue
+        elif kind != "assistant":
+            continue
+        msg = rec.get("message") or {}
+        content = msg.get("content")
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            text = "\n".join(p.get("text", "") for p in content
+                             if isinstance(p, dict) and p.get("type") == "text")
+        else:
+            continue
+        text = text.strip()
+        if not text or text.startswith("<system-reminder>"):
+            continue
+        turns.append((str(kind), _clip(text, MAX_TURN), _rec_ts_from(rec)))
+    return turns
+
+
+def _collect_qoder_transcripts() -> list[RawSession]:
+    """`~/.qoder-cn/projects/<workspace>/<session>.jsonl` (and the .qoder build).
+
+    The VS Code-fork layout under %APPDATA%/Qoder is what this collector used to
+    look for, and it does not exist on this machine: Qoder keeps its transcripts
+    in a home directory, the way Claude Code does. That is why a live Qoder
+    conversation produced zero captured turns.
+    """
+    out: list[RawSession] = []
+    for folder in _QODER_HOME_FOLDERS:
+        root = HOME / folder / "projects"
+        if not root.is_dir():
+            continue
+        for path in sorted(root.glob("*/*.jsonl")):
+            turns = _parse_qoder(path)
+            if not turns:
+                continue
+            stamps = [t[2] for t in turns if t[2]]
+            session_ts = max(stamps) if stamps else None
+            day = _local_day(session_ts) if session_ts else _day_of(path)
+            out.append(RawSession("qoder", path.stem, path.as_posix(), day, turns,
+                                  title=f"[qoder] {path.stem[:40]}", session_ts=session_ts))
+    return out
+
+
 def _collect_qoder() -> list[RawSession]:
-    return [s for s in _collect_vscode_family() if s.source == "qoder"]
+    transcripts = _collect_qoder_transcripts()
+    forked = [s for s in _collect_vscode_family() if s.source == "qoder"]
+    seen = {s.origin for s in transcripts}
+    return transcripts + [s for s in forked if s.origin not in seen]
 
 
 SOURCES: dict[str, Callable[[], list[RawSession]]] = {
@@ -807,7 +880,8 @@ SESSION_DISTILL_SYSTEM = (
     "DURABILITY IS JUDGED PER TYPE, not by one rule: for type=task ask 'would this still matter at the START OF THE "
     "NEXT SESSION?'; for every other type ask 'would this still matter in an unrelated future conversation?'. "
     "Write each claim as one short sentence, in the language the owner used in the quoted turn. "
-    "Copy the quote exactly from the transcript, in "
+    "Copy the quote as ONE contiguous span from a single turn — the shortest phrase that supports "
+    "the claim, never joined with '...' or '…', never summarised, never spanning turns — in "
     "its original language. Allowed types: fact, preference, goal, project, task. At most 8 items. "
     'Return only {"operations":[{"type":"preference","scope":"owner","subject":"workflow","claim":"...","quote":"..."}]}. '
     'Set scope to "owner" only for a standing preference, rule or fact about the owner that applies across all '

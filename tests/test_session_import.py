@@ -277,3 +277,55 @@ def test_clear_skips_restores_everything(tmp_path, monkeypatch):
     assert si.load_skips(svc) == {key}
     si.update_skips(svc, clear=True)
     assert si.load_skips(svc) == set()
+
+
+def test_qoder_transcripts_are_read_from_the_home_directory(tmp_path, monkeypatch):
+    """Qoder keeps Claude-shaped transcripts in ~/.qoder-cn/projects, not in a
+    VS Code fork layout. Looking only under %APPDATA%/Qoder found nothing, so a
+    live Qoder conversation produced zero captured turns.
+    """
+    home = tmp_path / "home"
+    session = home / ".qoder-cn" / "projects" / "D--proj"
+    session.mkdir(parents=True)
+    records = [
+        {"type": "user", "origin": {"kind": "human"}, "timestamp": "2026-11-05T14:03:00Z",
+         "message": {"role": "user", "content": [{"type": "text", "text": "现在有多少个agent接入了"}]}},
+        {"type": "assistant", "timestamp": "2026-11-05T14:03:10Z",
+         "message": {"role": "assistant", "content": [{"type": "text", "text": "六个"}]}},
+        # A tool result arrives with role user but is not the owner speaking.
+        {"type": "user", "timestamp": "2026-11-05T14:03:20Z",
+         "message": {"role": "user", "content": [{"type": "tool_result", "content": "噪音"}]}},
+        {"type": "user", "origin": {"kind": "human"}, "timestamp": "2026-11-05T14:10:00Z",
+         "message": {"role": "user", "content": "顺手修掉大小写隔离泄漏"}},
+    ]
+    (session / "abc123.jsonl").write_text(
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in records), encoding="utf-8")
+    monkeypatch.setattr(si, "HOME", home)
+
+    sessions = si._collect_qoder()
+    assert len(sessions) == 1
+    rs = sessions[0]
+    # Only the two human turns survive; the assistant reply stays as context.
+    # RawSession.__post_init__ splits the timestamps out into turn_ts, so the
+    # stored turns stay plain (role, text) pairs.
+    users = [(i, t[1]) for i, t in enumerate(rs.turns) if t[0] == "user"]
+    assert [text for _, text in users] == ["现在有多少个agent接入了", "顺手修掉大小写隔离泄漏"]
+    assert all(rs.turn_ts[i] is not None for i, _ in users), "each turn keeps its own timestamp"
+    assert all(rs.ts_for(i)[1] is True for i, _ in users), "per-turn time is exact"
+    assert rs.session_ts is not None
+
+
+def test_qoder_human_filter_keeps_non_typed_text_out(tmp_path, monkeypatch):
+    """Evidence is only text the user typed; Qoder marks that explicitly."""
+    home = tmp_path / "home"
+    ws = home / ".qoder-cn" / "projects" / "w"
+    ws.mkdir(parents=True)
+    records = [
+        {"type": "user", "origin": {"kind": "auto"},
+         "message": {"role": "user", "content": [{"type": "text", "text": "系统注入的目标"}]}},
+        {"type": "user",
+         "message": {"role": "user", "content": [{"type": "text", "text": "没有 origin 的工具回流"}]}},
+    ]
+    (ws / "s1.jsonl").write_text("\n".join(json.dumps(r) for r in records), encoding="utf-8")
+    monkeypatch.setattr(si, "HOME", home)
+    assert si._collect_qoder() == []

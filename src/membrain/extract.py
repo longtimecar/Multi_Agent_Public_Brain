@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -10,7 +11,7 @@ from typing import Any, Protocol
 
 from .embeddings import EmbeddingError
 from .llm import LLMError
-from .locking import file_lock
+from .locking import file_lock, try_lock
 from .injection import load as load_injections
 from .models import Episode, Evidence, Fact, FactType
 from .retrieval import Retriever
@@ -23,6 +24,12 @@ MAX_BATCH = 20
 # handoff refers to. Kept small: this is context, not a transcript dump.
 CONTEXT_BEFORE = 6
 CONTEXT_AFTER = 2
+# Sessions per extraction pass. Sized so a pass finishes well inside the
+# watcher's 300s cadence instead of colliding with the next scheduled run.
+DEFAULT_EXTRACT_SESSIONS = 12
+# How many passes a session may be retried while its operations keep getting
+# rejected by our own rules, before it is marked handled and left alone.
+MAX_RETRIES = 3
 
 
 class JSONClient(Protocol):
@@ -40,6 +47,16 @@ class ExtractionReport:
     superseded: int = 0
     retracted: int = 0
     skipped: int = 0
+    # Operations our own rules refused (bad quote, missing claim, implicit
+    # supersede). Counted, not fatal: they are the model's fault, not the
+    # pipeline's, and dropping one must not freeze the conversation behind it.
+    rejected: int = 0
+    # Sessions left for the next pass, and whether this pass was skipped
+    # because another extractor already holds the lock. Both make a stalled
+    # pipeline visible instead of looking like an empty day.
+    remaining: int = 0
+    deferred: bool = False
+    note: str = ""
     errors: list[str] | None = None
 
     def as_dict(self) -> dict[str, Any]:
@@ -57,7 +74,7 @@ def _state_path(store: Store) -> Path:
 def _load_state(store: Store) -> dict[str, Any]:
     path = _state_path(store)
     if not path.exists():
-        return {"processed": {}}
+        return {"processed": {}, "attempts": {}}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         processed = data["processed"]
@@ -65,7 +82,11 @@ def _load_state(store: Store) -> dict[str, Any]:
                                                       and all(isinstance(x, str) for x in v)
                                                       for k, v in processed.items()):
             raise ValueError("invalid processed sessions")
-        return {"processed": processed}
+        # `attempts` has to survive the round trip or the retry cap below can
+        # never be reached: every pass would start from zero and retry forever.
+        raw_attempts = data.get("attempts") or {}
+        attempts = {k: int(v) for k, v in raw_attempts.items()} if isinstance(raw_attempts, dict) else {}
+        return {"processed": processed, "attempts": attempts}
     except (OSError, ValueError, KeyError, AttributeError, TypeError) as exc:
         raise StoreError("extraction state is unreadable; refusing to replay episodes") from exc
 
@@ -118,6 +139,30 @@ _HANDOFF_MARK = re.compile(
 )
 
 
+def _group(episodes: list[Episode]) -> dict[str, list[Episode]]:
+    """Episodes by session, oldest first inside each session."""
+    groups: dict[str, list[Episode]] = {}
+    for ep in episodes:
+        groups.setdefault(ep.session, []).append(ep)
+    for eps in groups.values():
+        eps.sort(key=lambda e: e.ts)
+    return groups
+
+
+def _session_limit() -> int:
+    """Sessions one extraction pass may take, so it finishes before the next one
+    is scheduled instead of holding the lock for many minutes."""
+    raw = (os.environ.get("MEMBRAIN_EXTRACT_SESSIONS") or "").strip()
+    if raw:
+        try:
+            value = int(raw)
+        except ValueError:
+            return DEFAULT_EXTRACT_SESSIONS
+        if value > 0:
+            return value
+    return DEFAULT_EXTRACT_SESSIONS
+
+
 def _is_one_off_spec(text: str) -> bool:
     """A deliverable spec for THIS turn's work product, with no lasting wording."""
     return bool(_TASK_SPECS.search(text)) and not _HABIT_MARK.search(text)
@@ -128,14 +173,63 @@ def _is_task_handoff(text: str) -> bool:
     return bool(_HANDOFF_MARK.search(text))
 
 
-def _quote_episode(episodes: dict[str, Episode], episode_id: str, quote: str) -> Episode:
+_ELLIPSIS = re.compile(r"\s*(?:\.{3}|…+)\s*")
+
+
+def locate_quote(text: str, quote: str) -> str | None:
+    """Find the user's own words inside `text`, tolerating how models cite.
+
+    The rule is that evidence must be text the user typed. Two things kept
+    rejecting valid memories without any invention behind them: the model
+    re-wrapping whitespace, and — more often — citing a long turn as
+    "开头…中间…". Telling it to stop does not work reliably, so the check is
+    structural instead: every fragment of an ellipsis-joined quote must appear,
+    in order, in the user's turn, and what gets recorded is the longest of those
+    fragments as it really stands in the stored text. A fabricated quote still
+    fails, because there is nothing in the turn for its fragments to match.
+    """
+    wanted = " ".join((quote or "").split())
+    if not wanted:
+        return None
+    direct = quote.strip()
+    if direct in text:
+        return direct
+    fragments = [f.strip() for f in _ELLIPSIS.split(direct) if f.strip()]
+    if not fragments:
+        return None
+    if len(fragments) == 1:
+        pattern = r"\s+".join(re.escape(token) for token in fragments[0].split())
+        found = re.search(pattern, text, re.S)
+        return found.group(0) if found else None
+    # Multi-fragment citation: every piece must occur, in order, and the whole
+    # thing must fit inside the turn.
+    cursor = 0
+    matches: list[str] = []
+    for fragment in fragments:
+        pattern = r"\s+".join(re.escape(token) for token in fragment.split())
+        found = re.search(pattern, text[cursor:], re.S)
+        if not found:
+            return None
+        matches.append(text[cursor:][found.start():found.end()])
+        cursor += found.end()
+    return max(matches, key=len)
+
+
+def _quote_episode(episodes: dict[str, Episode], episode_id: str,
+                   quote: str) -> tuple[Episode, str]:
+    """Resolve the evidence turn and the user's own words it is quoting.
+
+    Returns the span as stored, not as the model re-wrapped it, so recorded
+    evidence stays verbatim.
+    """
     episode = episodes.get(episode_id)
     if episode is None or episode.role != "user":
         raise StoreError("evidence episode must be a captured user turn")
     text = clean_turn(episode.text)
-    if not text or not quote.strip() or quote.strip() not in text:
+    found = locate_quote(text, quote) if text else None
+    if found is None:
         raise StoreError("evidence quote must be a verbatim substring of the user turn")
-    return episode
+    return episode, found
 
 
 def _evidence(episode: Episode, quote: str) -> Evidence:
@@ -206,7 +300,10 @@ class Extractor:
             "Write each claim as ONE short sentence in the language the owner used in the quoted turn. "
             "The owner reads these claims back in the dashboard, and a question asked in their own "
             "language has to match them; translating a Chinese handoff into English makes it unfindable. "
-            "Quotes must be exact substrings. "
+            "A quote must be ONE CONTIGUOUS run of the user's own words copied out of a single turn — "
+            "the shortest span that supports the claim, usually under 60 characters. Never join distant "
+            "parts with '...' or '…', never summarise inside the quote, never cross turns. If the turn is "
+            "long, pick one phrase from it; do not compress it. "
             "For a task, put any stated deadline in the claim text and never treat a soft deadline "
             "('月底前', 'by Friday') as making the memory invalid. "
             "Use only these operations: add, corroborate, supersede, retract, none. "
@@ -284,8 +381,8 @@ class Extractor:
             return
         episode_id = str(op.get("episode", ""))
         quote = str(op.get("quote", "")).strip()
-        episode = _quote_episode(episodes, episode_id, quote)
-        evidence = _evidence(episode, quote)
+        episode, matched = _quote_episode(episodes, episode_id, quote)
+        evidence = _evidence(episode, matched)
 
         # Gap 8: type merge policy soft gate (ledger still owns truth; no hard delete).
         try:
@@ -426,25 +523,86 @@ class Extractor:
             if not isinstance(operations, list):
                 raise LLMError("extraction response must contain operations")
             episode_map = {ep.id: ep for ep in batch}
+            # Isolate per operation. One rejected item used to raise straight
+            # out of the loop, discarding every valid operation that came after
+            # it in the same batch — the model's single sloppy quote cost the
+            # whole batch its good memories.
+            rejected_here = 0
             for raw in operations:
                 if not isinstance(raw, dict):
-                    raise StoreError("each extraction operation must be an object")
-                self._apply(raw, episode_map, report)
-                self.retriever.scan_conflicts()
+                    rejected_here += 1
+                    report.rejected += 1
+                    report.errors.append("operation is not an object; dropped")
+                    continue
+                try:
+                    self._apply(raw, episode_map, report)
+                except StoreError as exc:
+                    rejected_here += 1
+                    report.rejected += 1
+                    report.errors.append(f"{exc}; dropped operation")
+            self.retriever.scan_conflicts()
             processed.update(ep.id for ep in batch)
-            state["processed"][session] = sorted(processed)
+            if rejected_here:
+                # A rejection is retryable: the model paraphrases a quote on one
+                # pass and copies it verbatim on the next, so the session stays
+                # pending. Operations that already succeeded are written, and the
+                # duplicate check turns a repeat into corroboration. But retries
+                # are capped, or a conversation that reliably trips a rule is
+                # replayed forever, burning a model call every pass and never
+                # advancing.
+                attempts = state.setdefault("attempts", {})
+                attempts[session] = int(attempts.get(session, 0)) + 1
+                if attempts[session] >= MAX_RETRIES:
+                    state["processed"][session] = sorted(processed)
+                    attempts[session] = 0
+                    report.errors.append(
+                        f"{session}: giving up after {MAX_RETRIES} retries with rejections outstanding")
+            else:
+                state["processed"][session] = sorted(processed)
+                state.get("attempts", {}).pop(session, None)
             _save_state(self.store, state)
             report.user_turns += len(batch)
         report.episodes_seen += len(pending)
         report.sessions += 1
 
     def run(self, session: str | None = None) -> ExtractionReport:
+        """Extract pending turns, newest conversations first, in bounded batches.
+
+        Three things used to combine into a silent stall:
+        * sessions were walked in path order, so a September conversation could
+          be re-examined while last night's handoff waited behind it;
+        * a pass took every pending session, so it held the lock for many
+          minutes and the next scheduled pass timed out on it;
+        * losing that lock raised, which reads identical to "nothing to do".
+        """
         report = ExtractionReport(errors=[])
         episodes = list(self.store.iter_episodes())
-        sessions = sorted({ep.session for ep in episodes if session is None or ep.session == session})
-        with file_lock(self.store.home / ".state" / "extraction.lock"):
+        state = None
+        with try_lock(self.store.home / ".state" / "extraction.lock") as held:
+            if not held:
+                # Another extractor is running. It has the same work; skip cleanly.
+                report.deferred = True
+                report.note = "另一个提炼正在运行，本次跳过"
+                return report
             state = _load_state(self.store)
-            for current in sessions:
+            processed = state.get("processed", {})
+            newest: dict[str, datetime] = {}
+            for ep in episodes:
+                if ep.ts > newest.get(ep.session, datetime.min.replace(tzinfo=timezone.utc)):
+                    newest[ep.session] = ep.ts
+            pending_sessions = [
+                s for s, eps in _group(episodes).items()
+                if (session is None or s == session)
+                and any(e.role == "user" and e.id not in set(processed.get(s, [])) for e in eps)
+            ]
+            # Most recent conversation first: what the owner did last night is
+            # the thing they will ask about this morning.
+            pending_sessions.sort(key=lambda s: newest.get(s, datetime.min.replace(tzinfo=timezone.utc)),
+                                  reverse=True)
+            limit = _session_limit() if session is None else 1
+            batch = pending_sessions[:limit]
+            report.remaining = max(len(pending_sessions) - len(batch), 0)
+            for current in batch:
                 try:
                     self.extract_session(current, episodes, state, report)
                 except (LLMError, StoreError, ValueError) as exc:
