@@ -84,7 +84,7 @@ function renderRecent(recent) {
       <span class="recent-type ${escapeHtml(fact.type)}" aria-hidden="true"></span>
       <span class="recent-main">
         <strong>${escapeHtml(fact.abstract || fact.claim)}</strong>
-        <small>${escapeHtml(labels.type[fact.type] || fact.type)} · ${escapeHtml(displaySource(fact.source?.agent || 'unknown'))} · 记于 ${formatDate(fact.created_at)}</small>
+        <small>${escapeHtml(labels.type[fact.type] || fact.type)} · ${escapeHtml(displaySource(fact.source?.agent || 'unknown'))} · 源自 ${formatDate(fact.valid_from)}</small>
       </span>
       ${statusBadge(fact.status)}
     </button>`).join('');

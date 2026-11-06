@@ -990,6 +990,7 @@ class DashboardRuntime:
                 evidence=list(merged_evidence.values()),
                 source_agent="membrain-dashboard", source_session="health-center",
                 supersedes=keep.id,
+                created_at=min(keep.created_at, drop.created_at),
             )
             saved = self.service.store.write_fact(replacement)
             # Both sides have to retire into the merged record. Leaving `keep`

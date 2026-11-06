@@ -877,3 +877,30 @@ def test_dashboard_fact_write_survives_index_sync_failure(dashboard, monkeypatch
     assert body["ok"] is True
     assert "index_warning" in body and "index is down" in body["index_warning"]
     assert service.store.get_fact(body["fact"]["id"]).claim == "Likes tea"
+
+
+def test_merging_a_duplicate_keeps_the_earlier_write_date(tmp_path):
+    """A merge continues a memory; it must not look newly created today.
+
+    The list shows when a memory originates, and the detail shows when it was
+    first written. Stamping the merge with "now" made an old statement look
+    fabricated the next day.
+    """
+    from datetime import timedelta
+
+    from membrain.store import _atomic_write
+    from test_core import make_settings, write
+
+    service = MemoryService(make_settings(tmp_path))
+    runtime = DashboardRuntime(service, auto_extract_chat=False)
+    old = write(service.store, "Prefers tea in the morning", "drink", FactType.PREFERENCE)
+    new = write(service.store, "Prefers tea in the morning.", "drink", FactType.PREFERENCE, days_ago=1)
+    long_ago = datetime.now(timezone.utc) - timedelta(days=2)
+    rewritten = service.store.get_fact(old.id).model_copy(update={"created_at": long_ago})
+    _atomic_write(service.store.fact_path(old.id), service.store.render(rewritten))
+    try:
+        merged = runtime.health_action({"action": "supersede", "keep_id": old.id, "drop_id": new.id})
+        saved = service.store.get_fact(merged["kept"])
+        assert saved.created_at == long_ago, "合并必须沿用最早的首次记录时间"
+    finally:
+        service.index.close()

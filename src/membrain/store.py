@@ -353,6 +353,7 @@ class Store:
         sensitive: bool | None = None,
         uri: str | None = None,
         abstract: str | None = None,
+        created_at: "datetime | None" = None,
     ) -> Fact:
         """Build a Fact with a fresh id; confidence is filled in by write_fact.
 
@@ -372,6 +373,9 @@ class Store:
             claim=claim.strip(),
             evidence=evidence,
             confidence=0.0,
+            # A merge continues an existing memory; stamping "now" would make an
+            # old statement look like it was first recorded today.
+            **({"created_at": created_at} if created_at is not None else {}),
             valid_from=max(e.date for e in evidence),
             supersedes=supersedes,
             source={"agent": source_agent, "session": source_session},
