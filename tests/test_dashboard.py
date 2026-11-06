@@ -904,3 +904,213 @@ def test_merging_a_duplicate_keeps_the_earlier_write_date(tmp_path):
         assert saved.created_at == long_ago, "合并必须沿用最早的首次记录时间"
     finally:
         service.index.close()
+
+
+def test_health_flags_a_command_stored_as_a_preference_and_the_agent_retracts_it(tmp_path):
+    """「把重复的清理掉」被存成偏好，健康报告要点名，Agent 自己撤回。
+
+    这是本轮真实事故：后台聊天里的一句操作指令变成了 preference。人工删不算
+    修复——系统要能自己发现并按规则处理。
+    """
+    from test_core import make_settings
+
+    service = MemoryService(make_settings(tmp_path))
+    runtime = DashboardRuntime(service, auto_extract_chat=False)
+    turn = Episode(id="e1", ts=datetime.now(timezone.utc), session="s", agent="workbuddy",
+                   role="user", text="把记忆库里重复的和冲突的都清理掉，不用问我，直接处理完告诉我结果。")
+    service.store.append_episodes([turn])
+    fact = service.store.draft_fact(
+        type=FactType.PREFERENCE, subject="memory-maintenance",
+        claim="Automatically clears duplicates and conflicts without asking",
+        evidence=[Evidence(episode="e1", quote="不用问我，直接处理完告诉我结果",
+                           date=turn.local_date, origin="stated")],
+        source_agent="workbuddy",
+    )
+    stored = service.store.write_fact(fact)
+    service.retriever.sync_fact(stored)
+    try:
+        report = runtime.health_report(refresh=True)
+        findings = [f for f in report["findings"] if f["kind"] == "command_misfiled"]
+        assert findings and stored.id in findings[0]["fact_ids"]
+
+        runtime.llm_client = FakeLLMClient([
+            {"action": "health_scan", "args": {"kinds": ["command_misfiled"]}},
+            {"action": "health_resolve", "args": {"decisions": [
+                {"op": "retract", "memory_id": stored.id, "reason": "这是指令，不是偏好"}]}},
+            {"action": "reply", "args": {"text": "已撤回 1 条指令误存为偏好的记忆。"}},
+        ])
+        result = runtime.chat("把指令误存成偏好的记忆清理掉", session_id="admin-misfiled")
+        applied = result["actions"][1]["result"]
+        assert applied["applied"] == 1, applied
+        assert service.store.get_fact(stored.id).status.value == "retracted"
+    finally:
+        service.index.close()
+
+
+def test_health_retract_refuses_a_memory_the_report_does_not_name(tmp_path):
+    from test_core import make_settings, write
+
+    service = MemoryService(make_settings(tmp_path))
+    runtime = DashboardRuntime(service, auto_extract_chat=False)
+    unrelated = write(service.store, "Prefers tea", "drink", FactType.PREFERENCE)
+    try:
+        ok, result = runtime._admin_execute(
+            "health_retract", {"memory_id": unrelated.id}, "清理", 
+            Episode(id="e1", ts=datetime.now(timezone.utc), session="s", agent="user",
+                    role="user", text="清理"), "s")
+        assert ok is False
+        assert "健康报告" in result["error"]
+        assert service.store.get_fact(unrelated.id).is_live
+    finally:
+        service.index.close()
+
+
+def test_health_flags_a_command_stored_as_a_preference_and_the_agent_retracts_it(tmp_path):
+    """「把重复的清理掉」被存成偏好，健康报告要点名，Agent 自己撤回。
+
+    这是本轮真实事故：后台聊天里的一句操作指令变成了 preference。人工删不算
+    修复——系统要能自己发现并按规则处理。
+    """
+    from test_core import make_settings
+
+    service = MemoryService(make_settings(tmp_path))
+    runtime = DashboardRuntime(service, auto_extract_chat=False)
+    turn = Episode(id="e1", ts=datetime.now(timezone.utc), session="s", agent="workbuddy",
+                   role="user", text="把记忆库里重复的和冲突的都清理掉，不用问我，直接处理完告诉我结果。")
+    service.store.append_episodes([turn])
+    fact = service.store.draft_fact(
+        type=FactType.PREFERENCE, subject="memory-maintenance",
+        claim="Automatically clears duplicates and conflicts without asking",
+        evidence=[Evidence(episode="e1", quote="不用问我，直接处理完告诉我结果",
+                           date=turn.local_date, origin="stated")],
+        source_agent="workbuddy",
+    )
+    stored = service.store.write_fact(fact)
+    service.retriever.sync_fact(stored)
+    try:
+        report = runtime.health_report(refresh=True)
+        findings = [f for f in report["findings"] if f["kind"] == "command_misfiled"]
+        assert findings and stored.id in findings[0]["fact_ids"]
+
+        runtime.llm_client = FakeLLMClient([
+            {"action": "health_scan", "args": {"kinds": ["command_misfiled"]}},
+            {"action": "health_resolve", "args": {"decisions": [
+                {"op": "retract", "memory_id": stored.id, "reason": "这是指令，不是偏好"}]}},
+            {"action": "reply", "args": {"text": "已撤回 1 条指令误存为偏好的记忆。"}},
+        ])
+        result = runtime.chat("把指令误存成偏好的记忆清理掉", session_id="admin-misfiled")
+        applied = result["actions"][1]["result"]
+        assert applied["applied"] == 1, applied
+        assert service.store.get_fact(stored.id).status.value == "retracted"
+    finally:
+        service.index.close()
+
+
+def test_health_retract_refuses_a_memory_the_report_does_not_name(tmp_path):
+    from test_core import make_settings, write
+
+    service = MemoryService(make_settings(tmp_path))
+    runtime = DashboardRuntime(service, auto_extract_chat=False)
+    unrelated = write(service.store, "Prefers tea", "drink", FactType.PREFERENCE)
+    try:
+        ok, result = runtime._admin_execute(
+            "health_retract", {"memory_id": unrelated.id}, "清理", 
+            Episode(id="e1", ts=datetime.now(timezone.utc), session="s", agent="user",
+                    role="user", text="清理"), "s")
+        assert ok is False
+        assert "健康报告" in result["error"]
+        assert service.store.get_fact(unrelated.id).is_live
+    finally:
+        service.index.close()
+
+
+def test_health_clean_applies_the_safe_policy_in_one_call(tmp_path):
+    """一条动作完成：撤回命令误存、合并重复，约束类一律跳过。"""
+    from test_core import make_settings, write
+
+    service = MemoryService(make_settings(tmp_path))
+    runtime = DashboardRuntime(service, auto_extract_chat=False)
+    turn = Episode(id="e1", ts=datetime.now(timezone.utc), session="s", agent="workbuddy",
+                   role="user", text="把记忆库里重复的都清理掉，不用问我。")
+    service.store.append_episodes([turn])
+    misfiled = service.store.write_fact(service.store.draft_fact(
+        type=FactType.PREFERENCE, subject="memory",
+        claim="Automatically clears duplicates",
+        evidence=[Evidence(episode="e1", quote="把记忆库里重复的都清理掉", date=turn.local_date,
+                           origin="stated")], source_agent="workbuddy"))
+    a = write(service.store, "Prefers tea in the morning", "drink", FactType.PREFERENCE)
+    b = write(service.store, "Prefers tea in the morning.", "drink", FactType.PREFERENCE, days_ago=1)
+    try:
+        ok, result = runtime._admin_execute(
+            "health_clean", {"kinds": ["command_misfiled", "duplicate"]}, "清理", turn, "s")
+        assert ok is True, result
+        assert result["retracted"] == 1, result
+        assert result["merged"] >= 1, result
+        assert service.store.get_fact(misfiled.id).status.value == "retracted"
+        assert service.store.get_fact(a.id).status.value != "active"
+        live = [f for f in service.store.live_facts() if f.subject == "drink"]
+        assert len(live) == 1, "重复合并后只应剩一条"
+    finally:
+        service.index.close()
+
+
+def test_health_clean_applies_the_safe_policy_in_one_call(tmp_path):
+    """一条动作完成：撤回命令误存、合并重复，约束类一律跳过。"""
+    from test_core import make_settings, write
+
+    service = MemoryService(make_settings(tmp_path))
+    runtime = DashboardRuntime(service, auto_extract_chat=False)
+    turn = Episode(id="e1", ts=datetime.now(timezone.utc), session="s", agent="workbuddy",
+                   role="user", text="把记忆库里重复的都清理掉，不用问我。")
+    service.store.append_episodes([turn])
+    misfiled = service.store.write_fact(service.store.draft_fact(
+        type=FactType.PREFERENCE, subject="memory",
+        claim="Automatically clears duplicates",
+        evidence=[Evidence(episode="e1", quote="把记忆库里重复的都清理掉", date=turn.local_date,
+                           origin="stated")], source_agent="workbuddy"))
+    a = write(service.store, "Prefers tea in the morning", "drink", FactType.PREFERENCE)
+    b = write(service.store, "Prefers tea in the morning.", "drink", FactType.PREFERENCE, days_ago=1)
+    try:
+        ok, result = runtime._admin_execute(
+            "health_clean", {"kinds": ["command_misfiled", "duplicate"]}, "清理", turn, "s")
+        assert ok is True, result
+        assert result["retracted"] == 1, result
+        assert result["merged"] >= 1, result
+        assert service.store.get_fact(misfiled.id).status.value == "retracted"
+        assert service.store.get_fact(a.id).status.value != "active"
+        live = [f for f in service.store.live_facts() if f.subject == "drink"]
+        assert len(live) == 1, "重复合并后只应剩一条"
+    finally:
+        service.index.close()
+
+
+def test_partial_answer_reports_what_actually_happened():
+    """清理成功了，最后一步模型出错，不能回答"没能完成"。"""
+    trace = [
+        {"action": "health_scan", "ok": True, "result": {"findings": []}},
+        {"action": "health_clean", "ok": True, "result": {"retracted": 2, "merged": 5}},
+    ]
+    text = DashboardRuntime._partial_answer(trace)
+    assert "撤回 2" in text and "合并 5" in text
+    assert "没能完成" not in text
+
+
+def test_partial_answer_is_honest_when_nothing_worked():
+    text = DashboardRuntime._partial_answer([{"action": "health_scan", "ok": True, "result": {}}])
+    assert "没能完成" in text
+
+
+def test_partial_answer_reports_what_actually_happened():
+    """清理成功了，最后一步模型出错，不能回答"没能完成"。"""
+    trace = [
+        {"action": "health_scan", "ok": True, "result": {"findings": []}},
+        {"action": "health_clean", "ok": True, "result": {"retracted": 2, "merged": 5}},
+    ]
+    text = DashboardRuntime._partial_answer(trace)
+    assert "撤回 2" in text and "合并 5" in text
+    assert "没能完成" not in text
+
+
+def test_partial_answer_is_honest_when_nothing_worked():
+    text = DashboardRuntime._partial_answer([{"action": "health_scan", "ok": True, "result": {}}])
+    assert "没能完成" in text

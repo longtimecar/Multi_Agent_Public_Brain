@@ -70,16 +70,56 @@ class HealthScanner:
         self.service = service
         self._since_use = since_use
 
-    def scan(self) -> list[Finding]:
+    def scan(self, kinds: set[str] | None = None) -> list[Finding]:
+        """Findings for the requested kinds, or everything.
+
+        Some detectors are cheap; duplicates embed every live claim. Asking for
+        one kind must not pay for the others — a targeted cleanup waited minutes
+        for an embedding pass it never used.
+        """
+        wanted = set(kinds) if kinds else {"duplicate", "conflict", "noise", "decay",
+                                           "command_misfiled"}
         disabled = self.service.disabled_agents()
         facts = [fact for fact in self.service.store.all_facts()
                  if fact.is_live and not is_disabled(fact.source.agent, disabled)]
         findings: list[Finding] = []
-        findings.extend(self._find_duplicates(facts))
-        findings.extend(self._find_conflicts())
-        findings.extend(self._find_noisy(facts))
-        findings.extend(self._find_decay_candidates(facts))
+        if "duplicate" in wanted:
+            findings.extend(self._find_duplicates(facts))
+        if "conflict" in wanted:
+            findings.extend(self._find_conflicts())
+        if "noise" in wanted:
+            findings.extend(self._find_noisy(facts))
+        if "decay" in wanted:
+            findings.extend(self._find_decay_candidates(facts))
+        if "command_misfiled" in wanted:
+            findings.extend(self._find_misfiled_commands(facts))
         return findings
+
+    def _find_misfiled_commands(self, facts: list[Fact]) -> list[Finding]:
+        """Preferences and facts whose evidence is an instruction to the assistant.
+
+        "把重复的清理掉" is work to do, not a trait of the owner. Storing it as a
+        preference is how one-off commands become durable noise; the admin can
+        retract these because the report names them.
+        """
+        from .extract import _is_agent_command
+
+        episodes = {ep.id: ep for ep in self.service.store.iter_episodes()}
+        out: list[Finding] = []
+        for fact in facts:
+            if fact.type not in {FactType.PREFERENCE, FactType.FACT, FactType.BELIEF}:
+                continue
+            turns = [episodes.get(item.episode) for item in fact.evidence]
+            turns = [turn for turn in turns if turn is not None]
+            if not turns or not all(_is_agent_command(turn.text) for turn in turns):
+                continue
+            out.append(Finding(
+                kind="command_misfiled", severity=3, fact_ids=(fact.id,),
+                summary=f"证据是给你的指令，不是用户的陈述：“{fact.claim[:70]}”",
+                suggestion="这不是偏好或事实：撤回，或改记为任务/目标。",
+                fingerprint=_fingerprint("command_misfiled", (fact.id,)),
+            ))
+        return out
 
     def _find_duplicates(self, facts: list[Fact]) -> list[Finding]:
         if len(facts) < 2:

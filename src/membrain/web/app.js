@@ -912,6 +912,7 @@ window.addEventListener('focus', () => {
 const HEALTH_KINDS = {
   duplicate: ['疑似重复', 'is-warn'], conflict: ['待裁决冲突', 'is-warn'],
   noisy: ['疑似噪声', ''], forget: ['遗忘候选', 'is-off'],
+  command_misfiled: ['指令误存为偏好', 'is-warn'],
 };
 
 async function loadHealth() {
@@ -933,7 +934,8 @@ async function loadHealth() {
       const [a, b] = finding.fact_ids.length === 2 ? finding.fact_ids : [finding.fact_ids[0], ''];
       const supersede = finding.kind === 'duplicate'
         ? `<button class="button button-dark" type="button" data-health-supersede="${finding.fingerprint}" data-keep="${escapeHtml(a)}" data-drop="${escapeHtml(b)}">合并并替代</button>` : '';
-      const retract = (finding.kind === 'noisy' || finding.kind === 'forget')
+      const retract = (finding.kind === 'noisy' || finding.kind === 'forget'
+        || finding.kind === 'command_misfiled')
         ? `<button class="button button-outline" type="button" data-health-retract="${finding.fingerprint}" data-drop="${escapeHtml(finding.fact_ids[0])}">撤回</button>` : '';
       return `<article class="health-finding">
         <div class="health-finding-head"><span class="agent-chip ${tone}">${label}</span><span class="health-fp">${finding.fact_ids.length} 条</span></div>
