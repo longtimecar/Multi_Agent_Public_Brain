@@ -46,7 +46,9 @@ def test_request_shapes_and_json_reply(tmp_path, monkeypatch, api_format):
         assert request.get_header("X-api-key") == "secret"
 
 
-@pytest.mark.parametrize("content", ["not json", "[]", '{"x":NaN}', '{"x":1,"x":2}', '```json\n{}\n```'])
+# A fenced object is accepted on purpose now (see the tolerance test below);
+# everything ambiguous or non-object still has to fail.
+@pytest.mark.parametrize("content", ["not json", "[]", '{"x":NaN}', '{"x":1,"x":2}', '{"a":1}{"b":2}'])
 def test_invalid_json_is_rejected(tmp_path, monkeypatch, content):
     settings = dataclasses.replace(make_settings(tmp_path), llm_base_url="https://example.test/v1", llm_model="fake")
     monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: Response({"choices":[{"message":{"content":content}}]}))
@@ -98,3 +100,41 @@ def test_text_completion_sends_conversation_history_without_json_mode(tmp_path, 
         assert "response_format" not in body
     else:
         assert [item["role"] for item in body["messages"]] == ["user", "assistant", "user"]
+
+
+def test_json_survives_one_line_of_prose_or_a_code_fence():
+    """模型偶尔在 JSON 前后带一句说明；以前直接判无效，用户要重说一遍。
+
+    仍只接受唯一一个对象：两个对象/没有对象都算失败，避免"取第一个"带来歧义。
+    """
+    import pytest
+
+    from membrain.llm import LLMError, _strict_object
+
+    assert _strict_object('好的，先扫描：{"action":"health_scan","args":{}}')["action"] == "health_scan"
+    assert _strict_object('```json\n{"action":"reply","args":{"text":"ok"}}\n```')["args"]["text"] == "ok"
+    # 字符串里的花括号不参与配对
+    assert _strict_object('说明 {"claim":"用了 {占位符} 的句子"}')["claim"].startswith("用了")
+    with pytest.raises(LLMError):
+        _strict_object('{"a":1}{"b":2}')
+    with pytest.raises(LLMError):
+        _strict_object("只有一句话，没有对象")
+
+
+def test_json_survives_one_line_of_prose_or_a_code_fence():
+    """模型偶尔在 JSON 前后带一句说明；以前直接判无效，用户要重说一遍。
+
+    仍只接受唯一一个对象：两个对象/没有对象都算失败，避免"取第一个"带来歧义。
+    """
+    import pytest
+
+    from membrain.llm import LLMError, _strict_object
+
+    assert _strict_object('好的，先扫描：{"action":"health_scan","args":{}}')["action"] == "health_scan"
+    assert _strict_object('```json\n{"action":"reply","args":{"text":"ok"}}\n```')["args"]["text"] == "ok"
+    # 字符串里的花括号不参与配对
+    assert _strict_object('说明 {"claim":"用了 {占位符} 的句子"}')["claim"].startswith("用了")
+    with pytest.raises(LLMError):
+        _strict_object('{"a":1}{"b":2}')
+    with pytest.raises(LLMError):
+        _strict_object("只有一句话，没有对象")

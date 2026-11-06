@@ -24,13 +24,61 @@ def _strict_object(text: str) -> dict[str, Any]:
                 raise ValueError("duplicate JSON key")
             result[key] = value
         return result
+    def load(value: str) -> Any:
+        return json.loads(value, parse_constant=reject_constant, object_pairs_hook=unique_object)
+
     try:
-        parsed = json.loads(text, parse_constant=reject_constant, object_pairs_hook=unique_object)
-    except (TypeError, ValueError) as exc:
-        raise LLMError("model returned invalid JSON") from exc
+        parsed = load(text)
+    except (TypeError, ValueError):
+        # Models intermittently wrap the object in one line of prose or a code
+        # fence. Accept exactly one object and nothing else; two objects or none
+        # is still an error, so the caller never acts on an ambiguous answer.
+        extracted = _single_object(text)
+        if extracted is None:
+            raise LLMError("model returned invalid JSON") from None
+        try:
+            parsed = load(extracted)
+        except (TypeError, ValueError) as exc:
+            raise LLMError("model returned invalid JSON") from exc
     if not isinstance(parsed, dict):
         raise LLMError("model response must be a JSON object")
     return parsed
+
+
+def _single_object(text: str) -> str | None:
+    """The one JSON object embedded in `text`, or None.
+
+    String-aware: braces inside quoted values do not count. Returns None when
+    there is no object or when a second one follows, so "pick the first object"
+    can never silently discard a conflicting instruction.
+    """
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                if "{" in text[index + 1:]:
+                    return None
+                return text[start:index + 1]
+    return None
 
 
 def _endpoint(base: str, api_format: str) -> str:
