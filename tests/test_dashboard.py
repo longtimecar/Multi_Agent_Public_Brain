@@ -1164,3 +1164,39 @@ def test_the_launcher_can_actually_replace_a_running_dashboard():
     finally:
         if child.poll() is None:
             child.kill()
+
+
+@pytest.mark.parametrize("query,expected", [
+    ("我的工作偏好", FactType.PREFERENCE),
+    ("我的任务", FactType.TASK),
+    ("我的目标", FactType.GOAL),
+    ("我的项目", FactType.PROJECT),
+    ("服务器端口", None),
+])
+def test_a_category_phrase_is_recognised_for_the_empty_search_fallback(query, expected):
+    """「我的工作偏好」搜不出单条记忆，但用户问的是一整类。
+
+    没有这个兜底，搜索框会给出一个空页面——而「我的偏好」却能列出上百条，
+    同一个意思两种结果。
+    """
+    from membrain.dashboard import _category_type
+
+    assert _category_type(query) is expected
+
+
+@pytest.mark.parametrize("query,expected", [
+    ("我的工作偏好", FactType.PREFERENCE),
+    ("我的任务", FactType.TASK),
+    ("我的目标", FactType.GOAL),
+    ("我的项目", FactType.PROJECT),
+    ("服务器端口", None),
+])
+def test_a_category_phrase_is_recognised_for_the_empty_search_fallback(query, expected):
+    """「我的工作偏好」搜不出单条记忆，但用户问的是一整类。
+
+    没有这个兜底，搜索框会给出一个空页面——而「我的偏好」却能列出上百条，
+    同一个意思两种结果。
+    """
+    from membrain.dashboard import _category_type
+
+    assert _category_type(query) is expected

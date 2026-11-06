@@ -117,6 +117,28 @@ ADMIN_WRITE_ACTIONS = {"correct", "retract", "record", "rag_delete",
 HEALTH_CACHE_SECONDS = 120.0
 
 
+_CATEGORY_WORDS: tuple[tuple[str, FactType], ...] = (
+    (("偏好", "喜好", "爱好", "习惯", "口味"), FactType.PREFERENCE),
+    (("目标", "计划", "想要"), FactType.GOAL),
+    (("任务", "待办"), FactType.TASK),
+    (("项目",), FactType.PROJECT),
+)
+
+
+def _category_type(query: str) -> FactType | None:
+    """The kind of memory a category phrase asks for, if it is one.
+
+    Used only as a last resort when a search matched nothing: "我的工作偏好"
+    names no single memory, so similarity search returns an empty page even
+    though the owner asked for a whole category.
+    """
+    text = query.casefold()
+    for words, fact_type in _CATEGORY_WORDS:
+        if any(word in text for word in words):
+            return fact_type
+    return None
+
+
 def _fact_json(fact: Any) -> dict[str, Any]:
     return fact.model_dump(mode="json")
 
@@ -1292,6 +1314,14 @@ def make_handler(runtime: DashboardRuntime):
                     if fact.id not in seen:
                         ordered.append(fact)
                         seen.add(fact.id)
+                if not ordered:
+                    # A category phrase with a qualifier ("我的工作偏好") matches
+                    # no single memory, so similarity returns nothing and the
+                    # page looks empty — while the bare "我的偏好" lists 100.
+                    # Falling back to that kind of memory beats an empty page.
+                    fallback = _category_type(search)
+                    if fallback:
+                        ordered = [fact for fact in facts if fact.type == fallback]
                 facts = ordered
             if status:
                 facts = [fact for fact in facts if fact.status.value == status]
