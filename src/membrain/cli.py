@@ -822,7 +822,16 @@ def main(argv: list[str] | None = None) -> int:
     d.set_defaults(func=cmd_dashboard)
 
     args = p.parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except KeyboardInterrupt:
+        return 130
+    except Exception as exc:  # a command must not dump a traceback into a log nobody reads
+        if os.environ.get("MEMBRAIN_DEBUG"):
+            raise
+        print(f"membrain {args.cmd}: {exc.__class__.__name__}: {exc}", file=sys.stderr)
+        print("Set MEMBRAIN_DEBUG=1 for the full traceback.", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
