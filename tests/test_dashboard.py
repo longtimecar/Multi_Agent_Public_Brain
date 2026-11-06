@@ -653,3 +653,227 @@ def test_rag_upload_accepts_bodies_over_64kb_and_lists_document(dashboard):
     assert status == 200 and json.loads(raw)["ok"] is True
     _, _, raw = request("/api/rag/documents")
     assert not any(d["id"] == doc["id"] for d in json.loads(raw)["documents"])
+
+
+def test_admin_cleans_a_duplicate_pair_and_both_sides_retire(tmp_path):
+    """Merging must leave exactly one live memory, not create a third.
+
+    The old merge retired only the dropped side, so the kept memory stayed live
+    next to the merged record they were identical: merging never reduced the
+    duplicate count.
+    """
+    from test_core import make_settings, write
+
+    service = MemoryService(make_settings(tmp_path))
+    keep = write(service.store, "Prefers tea in the morning", "drink", FactType.PREFERENCE)
+    # A different day keeps the evidence episodes distinct, the way two real
+    # conversations would be.
+    drop = write(service.store, "Prefers tea in the morning.", "drink", FactType.PREFERENCE, days_ago=1)
+    service.retriever.sync_fact(keep)
+    service.retriever.sync_fact(drop)
+    runtime = DashboardRuntime(service, llm_client=FakeLLMClient([
+        {"action": "health_scan", "args": {"kinds": ["duplicate"]}},
+        {"action": "health_resolve", "args": {"decisions": [
+            {"op": "merge", "keep_id": keep.id, "drop_id": drop.id}]}},
+        {"action": "reply", "args": {"text": "已合并 1 组重复记忆。"}},
+    ]), auto_extract_chat=False)
+    try:
+        result = runtime.chat("把重复的记忆清理一下", session_id="admin-health")
+        scan = result["actions"][0]["result"]
+        assert scan["findings"], scan
+        assert scan["findings"][0]["facts"], "finding must carry the facts to decide on"
+
+        merged = result["actions"][1]["result"]
+        assert merged["applied"] == 1, merged
+
+        assert not service.store.get_fact(keep.id).is_live
+        assert not service.store.get_fact(drop.id).is_live
+        live = service.store.live_facts()
+        assert len(live) == 1
+        assert len(live[0].evidence) == 2, "合并必须保留双方证据"
+
+        report = runtime.health_report(refresh=True)
+        assert not [f for f in report["findings"] if f["kind"] == "duplicate"]
+    finally:
+        service.index.close()
+
+
+def test_admin_refuses_to_merge_a_constraint(tmp_path):
+    from test_core import make_settings, write
+
+    service = MemoryService(make_settings(tmp_path))
+    hard = write(service.store, "Never shares the home address", "privacy", FactType.CONSTRAINT)
+    other = write(service.store, "Never shares the home address.", "privacy", FactType.PREFERENCE)
+    service.retriever.sync_fact(hard)
+    service.retriever.sync_fact(other)
+    runtime = DashboardRuntime(service, llm_client=FakeLLMClient([
+        {"action": "health_merge", "args": {"keep_id": other.id, "drop_id": hard.id}},
+        {"action": "reply", "args": {"text": "硬约束需要你手动处理。"}},
+    ]), auto_extract_chat=False)
+    try:
+        result = runtime.chat("合并这两条", session_id="admin-health-constraint")
+        assert result["actions"][0]["ok"] is False
+        assert "硬约束" in result["actions"][0]["result"]["error"]
+        assert service.store.get_fact(hard.id).is_live
+    finally:
+        service.index.close()
+
+
+def test_health_report_is_cached_between_calls(tmp_path, monkeypatch):
+    from test_core import make_settings, write
+
+    service = MemoryService(make_settings(tmp_path))
+    write(service.store, "Prefers tea", "drink", FactType.PREFERENCE)
+    runtime = DashboardRuntime(service, auto_extract_chat=False)
+    try:
+        calls = {"n": 0}
+        original = runtime.health_report
+
+        def counted(refresh: bool = False):
+            calls["n"] += 1
+            return original(refresh=refresh)
+
+        first = runtime.health_report()
+        second = runtime.health_report()
+        assert first["scanned_at"] == second["scanned_at"], "120 秒内应复用缓存"
+    finally:
+        service.index.close()
+
+
+def test_admin_cleans_a_duplicate_pair_and_both_sides_retire(tmp_path):
+    """Merging must leave exactly one live memory, not create a third.
+
+    The old merge retired only the dropped side, so the kept memory stayed live
+    next to the merged record they were identical: merging never reduced the
+    duplicate count.
+    """
+    from test_core import make_settings, write
+
+    service = MemoryService(make_settings(tmp_path))
+    keep = write(service.store, "Prefers tea in the morning", "drink", FactType.PREFERENCE)
+    # A different day keeps the evidence episodes distinct, the way two real
+    # conversations would be.
+    drop = write(service.store, "Prefers tea in the morning.", "drink", FactType.PREFERENCE, days_ago=1)
+    service.retriever.sync_fact(keep)
+    service.retriever.sync_fact(drop)
+    runtime = DashboardRuntime(service, llm_client=FakeLLMClient([
+        {"action": "health_scan", "args": {"kinds": ["duplicate"]}},
+        {"action": "health_resolve", "args": {"decisions": [
+            {"op": "merge", "keep_id": keep.id, "drop_id": drop.id}]}},
+        {"action": "reply", "args": {"text": "已合并 1 组重复记忆。"}},
+    ]), auto_extract_chat=False)
+    try:
+        result = runtime.chat("把重复的记忆清理一下", session_id="admin-health")
+        scan = result["actions"][0]["result"]
+        assert scan["findings"], scan
+        assert scan["findings"][0]["facts"], "finding must carry the facts to decide on"
+
+        merged = result["actions"][1]["result"]
+        assert merged["applied"] == 1, merged
+
+        assert not service.store.get_fact(keep.id).is_live
+        assert not service.store.get_fact(drop.id).is_live
+        live = service.store.live_facts()
+        assert len(live) == 1
+        assert len(live[0].evidence) == 2, "合并必须保留双方证据"
+
+        report = runtime.health_report(refresh=True)
+        assert not [f for f in report["findings"] if f["kind"] == "duplicate"]
+    finally:
+        service.index.close()
+
+
+def test_admin_refuses_to_merge_a_constraint(tmp_path):
+    from test_core import make_settings, write
+
+    service = MemoryService(make_settings(tmp_path))
+    hard = write(service.store, "Never shares the home address", "privacy", FactType.CONSTRAINT)
+    other = write(service.store, "Never shares the home address.", "privacy", FactType.PREFERENCE)
+    service.retriever.sync_fact(hard)
+    service.retriever.sync_fact(other)
+    runtime = DashboardRuntime(service, llm_client=FakeLLMClient([
+        {"action": "health_merge", "args": {"keep_id": other.id, "drop_id": hard.id}},
+        {"action": "reply", "args": {"text": "硬约束需要你手动处理。"}},
+    ]), auto_extract_chat=False)
+    try:
+        result = runtime.chat("合并这两条", session_id="admin-health-constraint")
+        assert result["actions"][0]["ok"] is False
+        assert "硬约束" in result["actions"][0]["result"]["error"]
+        assert service.store.get_fact(hard.id).is_live
+    finally:
+        service.index.close()
+
+
+def test_health_report_is_cached_between_calls(tmp_path, monkeypatch):
+    from test_core import make_settings, write
+
+    service = MemoryService(make_settings(tmp_path))
+    write(service.store, "Prefers tea", "drink", FactType.PREFERENCE)
+    runtime = DashboardRuntime(service, auto_extract_chat=False)
+    try:
+        calls = {"n": 0}
+        original = runtime.health_report
+
+        def counted(refresh: bool = False):
+            calls["n"] += 1
+            return original(refresh=refresh)
+
+        first = runtime.health_report()
+        second = runtime.health_report()
+        assert first["scanned_at"] == second["scanned_at"], "120 秒内应复用缓存"
+    finally:
+        service.index.close()
+
+
+def test_merge_collapses_evidence_that_cites_the_same_turn(tmp_path):
+    """One turn may cite a memory only once, so merging must not repeat it."""
+    from test_core import make_settings, write
+
+    service = MemoryService(make_settings(tmp_path))
+    a = write(service.store, "Prefers tea in the morning", "drink", FactType.PREFERENCE)
+    b = write(service.store, "Prefers tea in the morning.", "drink", FactType.PREFERENCE)
+    service.retriever.sync_fact(a)
+    service.retriever.sync_fact(b)
+    runtime = DashboardRuntime(service, auto_extract_chat=False)
+    try:
+        merged = runtime.health_action({"action": "supersede", "keep_id": a.id, "drop_id": b.id})
+        assert merged["ok"] is True
+        saved = service.store.get_fact(merged["kept"])
+        assert len(saved.evidence) == 1, "同一回合只能被引用一次"
+    finally:
+        service.index.close()
+
+
+def test_merge_collapses_evidence_that_cites_the_same_turn(tmp_path):
+    """One turn may cite a memory only once, so merging must not repeat it."""
+    from test_core import make_settings, write
+
+    service = MemoryService(make_settings(tmp_path))
+    a = write(service.store, "Prefers tea in the morning", "drink", FactType.PREFERENCE)
+    b = write(service.store, "Prefers tea in the morning.", "drink", FactType.PREFERENCE)
+    service.retriever.sync_fact(a)
+    service.retriever.sync_fact(b)
+    runtime = DashboardRuntime(service, auto_extract_chat=False)
+    try:
+        merged = runtime.health_action({"action": "supersede", "keep_id": a.id, "drop_id": b.id})
+        assert merged["ok"] is True
+        saved = service.store.get_fact(merged["kept"])
+        assert len(saved.evidence) == 1, "同一回合只能被引用一次"
+    finally:
+        service.index.close()
+
+
+def test_dashboard_fact_write_survives_index_sync_failure(dashboard, monkeypatch):
+    request, service = dashboard
+
+    def boom(_fact):
+        raise RuntimeError("index is down")
+
+    monkeypatch.setattr(service.retriever, "sync_fact", boom)
+    status, _, raw = request("/api/facts", {"type": "preference", "subject": "drink",
+                                            "claim": "Likes tea", "quote": "我喜欢喝茶"})
+    assert status == 201, raw[:200]
+    body = json.loads(raw)
+    assert body["ok"] is True
+    assert "index_warning" in body and "index is down" in body["index_warning"]
+    assert service.store.get_fact(body["fact"]["id"]).claim == "Likes tea"
