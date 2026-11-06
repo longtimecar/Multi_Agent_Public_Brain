@@ -521,3 +521,147 @@ def test_quote_repair_calls_are_capped_per_batch(extractor):
     assert report.repaired == 0
     assert report.rejected == len(operations)
     assert store.live_facts() == []
+
+
+def test_a_command_to_the_assistant_cannot_become_a_preference(extractor):
+    """「把记忆清理掉」是让我干活，不是"用户偏好自动清理"。
+
+    这条真实事故：后台聊天里的一句操作指令被提炼成 preference 入库，长期下来
+    就是一堆"用户喜欢自动清理""用户要求重建索引"的垃圾。
+    """
+    _, store, _, retriever = extractor
+    store.append_episodes([
+        episode("e1", "user", "把记忆库里重复的和冲突的都清理掉，不用问我，直接处理完告诉我结果。"),
+        episode("a1", "assistant", "清理完了。"),
+    ])
+    report, _ = run_extractor(store, retriever, [{"operations": [{
+        "op": "add", "type": "preference", "subject": "memory-maintenance",
+        "claim": "Automatically clears duplicates and conflicts without asking",
+        "episode": "e1", "quote": "不用问我，直接处理完告诉我结果", "durable": True}]}])
+    assert report.facts_added == 0
+    assert report.skipped >= 1
+    assert not store.live_facts()
+
+
+def test_a_command_can_still_back_a_task_memory(extractor):
+    """命令不能变偏好，但"把X做完，明天继续"确实是交接，要能存成任务。"""
+    _, store, _, retriever = extractor
+    store.append_episodes([
+        episode("e1", "user", "把重复的记忆清理掉，明天继续处理剩下的冲突。"),
+        episode("a1", "assistant", "好。"),
+    ])
+    report, _ = run_extractor(store, retriever, [{"operations": [{
+        "op": "add", "type": "task", "subject": "memory-cleanup",
+        "claim": "Clean duplicate memories and continue with conflicts tomorrow",
+        "episode": "e1", "quote": "明天继续处理剩下的冲突", "durable": True}]}])
+    assert report.facts_added == 1
+    assert store.live_facts()[0].type == FactType.TASK
+
+
+def test_dashboard_chat_turns_are_not_mined_for_memories(extractor):
+    """后台聊天是控制面：它是"下命令"的地方，不该被当成生活对话去提炼。"""
+    settings, store, index, _ = extractor
+    store.append_episodes([
+        episode("e1", "user", "把重复的记忆清理掉", agent="membrain-dashboard"),
+        episode("a1", "assistant", "已清理", agent="membrain-dashboard"),
+    ])
+    retriever = Retriever(store, index, FakeEmbedder(), settings)
+    llm = FakeLLMClient([{"operations": [{
+        "op": "add", "type": "preference", "subject": "memory",
+        "claim": "Wants automatic cleanup", "episode": "e1",
+        "quote": "把重复的记忆清理掉"}]}])
+    report = Extractor(store, retriever, llm).run("s1")
+    assert report.facts_added == 0
+    assert llm.calls == [], "控制面的回合不应触发提炼模型"
+    assert not store.live_facts()
+
+
+def test_a_command_to_the_assistant_cannot_become_a_preference(extractor):
+    """「把记忆清理掉」是让我干活，不是"用户偏好自动清理"。
+
+    这条真实事故：后台聊天里的一句操作指令被提炼成 preference 入库，长期下来
+    就是一堆"用户喜欢自动清理""用户要求重建索引"的垃圾。
+    """
+    _, store, _, retriever = extractor
+    store.append_episodes([
+        episode("e1", "user", "把记忆库里重复的和冲突的都清理掉，不用问我，直接处理完告诉我结果。"),
+        episode("a1", "assistant", "清理完了。"),
+    ])
+    report, _ = run_extractor(store, retriever, [{"operations": [{
+        "op": "add", "type": "preference", "subject": "memory-maintenance",
+        "claim": "Automatically clears duplicates and conflicts without asking",
+        "episode": "e1", "quote": "不用问我，直接处理完告诉我结果", "durable": True}]}])
+    assert report.facts_added == 0
+    assert report.skipped >= 1
+    assert not store.live_facts()
+
+
+def test_a_command_can_still_back_a_task_memory(extractor):
+    """命令不能变偏好，但"把X做完，明天继续"确实是交接，要能存成任务。"""
+    _, store, _, retriever = extractor
+    store.append_episodes([
+        episode("e1", "user", "把重复的记忆清理掉，明天继续处理剩下的冲突。"),
+        episode("a1", "assistant", "好。"),
+    ])
+    report, _ = run_extractor(store, retriever, [{"operations": [{
+        "op": "add", "type": "task", "subject": "memory-cleanup",
+        "claim": "Clean duplicate memories and continue with conflicts tomorrow",
+        "episode": "e1", "quote": "明天继续处理剩下的冲突", "durable": True}]}])
+    assert report.facts_added == 1
+    assert store.live_facts()[0].type == FactType.TASK
+
+
+def test_dashboard_chat_turns_are_not_mined_for_memories(extractor):
+    """后台聊天是控制面：它是"下命令"的地方，不该被当成生活对话去提炼。"""
+    settings, store, index, _ = extractor
+    store.append_episodes([
+        episode("e1", "user", "把重复的记忆清理掉", agent="membrain-dashboard"),
+        episode("a1", "assistant", "已清理", agent="membrain-dashboard"),
+    ])
+    retriever = Retriever(store, index, FakeEmbedder(), settings)
+    llm = FakeLLMClient([{"operations": [{
+        "op": "add", "type": "preference", "subject": "memory",
+        "claim": "Wants automatic cleanup", "episode": "e1",
+        "quote": "把重复的记忆清理掉"}]}])
+    report = Extractor(store, retriever, llm).run("s1")
+    assert report.facts_added == 0
+    assert llm.calls == [], "控制面的回合不应触发提炼模型"
+    assert not store.live_facts()
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("把记忆库里重复的和冲突的都清理掉，不用问我", True),
+    ("我不喜欢自动清理，先问我要不要做", False),
+    ("把工作区里的东西做一下分类，并告诉我用途", True),
+    ("整理好，创建好相关文件夹，文件名写好备注", True),
+    ("将cursor全局改为中文", True),
+    ("请把这份 PDF 转成 markdown", True),
+    ("clean up the duplicate memories please", True),
+    ("我喜欢喝茶，尤其是早上", False),
+    ("帮我看看这个架构", False),
+    ("I prefer tea in the morning", False),
+])
+def test_command_detection_matches_real_phrasing(text, expected):
+    """命令识别要按真实说法校准：既不能漏（把指令当偏好），也不能滥杀陈述。"""
+    from membrain.extract import _is_agent_command
+
+    assert _is_agent_command(text) is expected
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("把记忆库里重复的和冲突的都清理掉，不用问我", True),
+    ("我不喜欢自动清理，先问我要不要做", False),
+    ("把工作区里的东西做一下分类，并告诉我用途", True),
+    ("整理好，创建好相关文件夹，文件名写好备注", True),
+    ("将cursor全局改为中文", True),
+    ("请把这份 PDF 转成 markdown", True),
+    ("clean up the duplicate memories please", True),
+    ("我喜欢喝茶，尤其是早上", False),
+    ("帮我看看这个架构", False),
+    ("I prefer tea in the morning", False),
+])
+def test_command_detection_matches_real_phrasing(text, expected):
+    """命令识别要按真实说法校准：既不能漏（把指令当偏好），也不能滥杀陈述。"""
+    from membrain.extract import _is_agent_command
+
+    assert _is_agent_command(text) is expected

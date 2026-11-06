@@ -19,6 +19,8 @@ from .store import Store, StoreError, _atomic_write
 from .text import clean_turn, widen_to_clause
 
 STATE_FILE = ".state/extraction.json"
+# Agents that drive the system rather than live in it; their turns are commands.
+CONTROL_AGENTS = {"membrain-dashboard"}
 MAX_BATCH = 20
 # Non-evidence turns included around the batch so the model can see what a
 # handoff refers to. Kept small: this is context, not a transcript dump.
@@ -185,6 +187,26 @@ def _is_one_off_spec(text: str) -> bool:
     return bool(_TASK_SPECS.search(text)) and not _HABIT_MARK.search(text)
 
 
+# A request for an action ("把重复的清理掉", "将 cursor 改成中文", "帮我整理文件")
+# is work to do in this session, not a trait of the person. It may back a task,
+# goal or project memory; it must never become a preference or a fact.
+_AGENT_COMMAND = re.compile(
+    r"^\s*(?:请|帮我|麻烦|给我|替我)?\s*(?:把|将)\s*.{0,40}?"
+    r"(?:清理|删除|删掉|合并|撤回|重建|重跑|重新|改成|改为|改一下|换掉|转成|转为|整理|分类|提取|导入|导出|"
+    r"告诉我|发我|给我|列出|列一下|说明一下|解释一下|演示一下)"
+    r"|^\s*(?:请|帮我|麻烦|给我|替我)\s*.{0,24}?"
+    r"(?:清理|删除|删掉|合并|重建|重跑|重新|导入|导出|整理|分类|提取|改一下)"
+    r"|^\s*(?:清理|删除|合并|重建|重跑|重新提炼|导入|导出|整理)"
+    r"|^\s*(?:please\s+)?(?:clean|merge|delete|remove|rebuild|re-?index|re-?run|import|export)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_agent_command(text: str) -> bool:
+    """True when the turn instructs the assistant to do something."""
+    return bool(_AGENT_COMMAND.search(text or ""))
+
+
 def _is_task_handoff(text: str) -> bool:
     """The turn passes work to a later session, so it can support a task memory."""
     return bool(_HANDOFF_MARK.search(text))
@@ -331,6 +353,10 @@ class Extractor:
             "hypotheticals, facts about other people, tool output, and suggestions the user did not adopt. "
             "The distinction: '写一封邮件，主题行…第一段…' specifies the reply you must produce now — drop it. "
             "'记住进度，明天继续优化X' hands work to a future session — store it as task. "
+            "A command is not a trait: '把重复的清理掉', '将 cursor 改成中文', '帮我整理文件' ask for an "
+            "action now. They may support a task, goal or project memory about the work itself, but NEVER a "
+            "preference, fact or belief about the person — '清理一下重复' does not mean the owner prefers "
+            "automatic cleanup. "
             "DURABILITY IS JUDGED PER TYPE, not by one rule: "
             "for type=task ask 'would this still matter at the START OF THE NEXT SESSION?'; "
             "for every other type ask 'would recalling this a month from now in an UNRELATED task be helpful?'. "
@@ -544,6 +570,13 @@ class Extractor:
             elif _is_one_off_spec(episode.text):
                 report.skipped += 1
                 return
+            elif type_ in {FactType.PREFERENCE, FactType.FACT, FactType.BELIEF} \
+                    and _is_agent_command(episode.text):
+                # "把记忆清理掉" tells the assistant what to do; it does not say
+                # the owner prefers automatic cleanup. Storing the command as a
+                # trait is how one-off instructions became durable noise.
+                report.skipped += 1
+                return
             subject = str(op.get("subject", "")).strip()
             claim = str(op.get("claim", "")).strip()
             if not subject or not claim:
@@ -632,6 +665,18 @@ class Extractor:
         pending = [ep for ep in episodes if ep.session == session and ep.id not in processed]
         if not pending:
             return
+        # The dashboard chat is a control surface: "clean the duplicates" there
+        # is an instruction to the administrator, not something to mine as a
+        # personal fact. Memories from that surface are written explicitly by
+        # the admin's record action, which carries a verbatim quote.
+        control = {ep.id for ep in pending if ep.agent in CONTROL_AGENTS}
+        if control:
+            state["processed"][session] = sorted(processed | control)
+            _save_state(self.store, state)
+            pending = [ep for ep in pending if ep.id not in control]
+            processed |= control
+            if not pending:
+                return
         users = [ep for ep in pending if ep.role == "user" and clean_turn(ep.text)]
         if not users:
             state["processed"][session] = sorted(processed | {ep.id for ep in pending})
