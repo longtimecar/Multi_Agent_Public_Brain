@@ -249,3 +249,30 @@ def test_process_scan_tolerates_empty_output(monkeypatch):
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: Done())
     monkeypatch.setattr(agents.os, "name", "nt")
     assert agents._running_images() == set()
+
+
+def test_connect_repairs_an_entry_left_pointing_at_an_old_install(tmp_path):
+    """重装后旧路径的条目要能被修好，而不是被当成"已接入"跳过。
+
+    OpenCode 就是这样一直连不上的：配置里写着上一个安装目录的 python，
+    每个界面都显示已连接，一启动就失败。只检查"键存在不存在"看不出来。
+    """
+    home = tmp_path
+    (home / ".config" / "opencode").mkdir(parents=True)
+    (home / ".config" / "opencode" / "opencode.jsonc").write_text(json.dumps({
+        "mcp": {"membrain": {"type": "local", "command": ["D:/gone/.venv/Scripts/python.exe",
+                                                          "-m", "membrain.server"],
+                             "environment": {"MEMBRAIN_HOME": "D:/gone/memory"}, "enabled": True}},
+    }), encoding="utf-8")
+
+    before = _scan(tmp_path)
+    assert before["opencode"]["status"] == "not_connected", "指向旧安装的条目不能算已连接"
+
+    result = agents.connect("opencode", tmp_path / "memory", home=home, appdata=tmp_path / "Roaming")
+    assert result["changed"] is True and result["repaired"] is True
+    saved = json.loads((home / ".config" / "opencode" / "opencode.jsonc").read_text(encoding="utf-8"))
+    assert saved["mcp"]["membrain"]["command"][0] != "D:/gone/.venv/Scripts/python.exe"
+    assert _scan(tmp_path)["opencode"]["status"] == "connected"
+
+    again = agents.connect("opencode", tmp_path / "memory", home=home, appdata=tmp_path / "Roaming")
+    assert again["changed"] is False, "修好之后再点一次不应重复改动"

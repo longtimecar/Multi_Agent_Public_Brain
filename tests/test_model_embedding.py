@@ -187,6 +187,10 @@ def test_trae_and_qoder_use_their_real_folder_names(tmp_path):
     roaming = tmp_path / "Roaming"
     (roaming / "Trae").mkdir(parents=True)
     (roaming / "com.qoder.app.stable").mkdir(parents=True)
+    # Qoder keeps its MCP settings under ~/.qoder-cn, which an app that has run
+    # at least once leaves behind; the residue guard needs it to call the app
+    # installed rather than a leftover data folder.
+    (tmp_path / ".qoder-cn").mkdir(parents=True)
     items = _scan(tmp_path)
     assert items["trae"]["installed"] and items["qoder"]["installed"]
 
@@ -306,3 +310,37 @@ def test_dsh_injected_context_is_not_user_evidence(tmp_path):
     sessions = _dsh_sessions(tmp_path)
     assert sessions[0].turns == [("user", "real question")]
 
+
+
+def test_dsh_reads_the_flat_user_content_shape(tmp_path):
+    """新版 dsh 把用户消息放在 data.content，而不是 data.message.content。
+
+    只认旧结构时，37 场会话解析出 1125 条回合却**一个用户回合都没有**：
+    采集永远为空，界面上看起来像"这个 Agent 没说过话"。
+    """
+    _dsh_tree(tmp_path, [
+        {"type": "session", "id": "s1"},
+        {"type": "user/message", "data": {"role": "user", "id": "m1", "source": "typed",
+                                          "content": [{"type": "text", "text": "把重复的记忆清理掉"}]}},
+        {"type": "assistant/message", "data": {"turn": 1, "step": 1, "message": {
+            "role": "assistant", "content": [{"type": "text", "text": "好"}]}}},
+    ])
+    sessions = _dsh_sessions(tmp_path)
+    assert sessions[0].turns == [("user", "把重复的记忆清理掉"), ("assistant", "好")]
+
+
+def test_dsh_reads_the_flat_user_content_shape(tmp_path):
+    """新版 dsh 把用户消息放在 data.content，而不是 data.message.content。
+
+    只认旧结构时，37 场会话解析出 1125 条回合却**一个用户回合都没有**：
+    采集永远为空，界面上看起来像"这个 Agent 没说过话"。
+    """
+    _dsh_tree(tmp_path, [
+        {"type": "session", "id": "s1"},
+        {"type": "user/message", "data": {"role": "user", "id": "m1", "source": "typed",
+                                          "content": [{"type": "text", "text": "把重复的记忆清理掉"}]}},
+        {"type": "assistant/message", "data": {"turn": 1, "step": 1, "message": {
+            "role": "assistant", "content": [{"type": "text", "text": "好"}]}}},
+    ])
+    sessions = _dsh_sessions(tmp_path)
+    assert sessions[0].turns == [("user", "把重复的记忆清理掉"), ("assistant", "好")]

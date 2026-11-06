@@ -57,13 +57,14 @@ SPECS: tuple[AgentSpec, ...] = (
     AgentSpec("trae", "Trae / Trae CN", ("trae",), paths=("%APPDATA%/Trae", "%APPDATA%/Trae CN", "~/.trae")),
     AgentSpec("qoder", "Qoder", ("qoder",),
               paths=("%APPDATA%/com.qoder.app.stable", "%APPDATA%/com.qodercn.app.stable",
-                     "~/.qoder", "~/.qoder-cn")),
+                     "~/.qoder", "~/.qoder-cn"),
+              config="~/.qoder-cn/settings.json"),
     AgentSpec("deepseek", "DeepSeek", ("deepseek",),
               paths=("%APPDATA%/DeepSeek", "~/.deepseek"),
               config="~/.deepseek/mcp.json"),
     AgentSpec("deepseek-harness", "DeepSeek Harness", ("deepseek harness", "deepseek-harness", "dsh"),
               paths=("%APPDATA%/@deepseek-ai", "%LOCALAPPDATA%/@deepseek-aidsh-desktop-updater",
-                     "~/.deepseek-harness"),
+                     "~/.deepseek-harness", "~/.dsh"),
               where="在 DeepSeek Harness 的 设置 → MCP 里新增一个自定义 MCP 服务"),
     # A separate product whose name merely starts with "DeepSeek". Declaring it
     # here is what keeps its leftover data directory and uninstall entry from
@@ -182,6 +183,37 @@ def server_entry(style: str, memory_home: Path) -> dict[str, Any]:
     return {"command": command[0], "args": command[1:], "env": env}
 
 
+def _launch_parts(entry: dict[str, Any]) -> list[str]:
+    """The argv an entry would run, whether it stores it as a list or as command+args."""
+    command = entry.get("command")
+    if isinstance(command, list):
+        return [str(part) for part in command]
+    return [str(command or "")] + [str(a) for a in (entry.get("args") or [])]
+
+
+def _same_server(existing: Any, desired: dict[str, Any]) -> bool:
+    """True when an entry already launches this brain from this install.
+
+    A reinstall moves the project to a new path; an entry left pointing at the
+    old one looks connected in every config but fails at launch, so the launch
+    command — not the key name — decides whether a config is already correct.
+    """
+    if not isinstance(existing, dict):
+        return False
+    if str(existing.get("type") or "local") != str(desired.get("type") or "local"):
+        return False
+    have = [p.replace("\\", "/") for p in _launch_parts(existing)]
+    want = [p.replace("\\", "/") for p in _launch_parts(desired)]
+    if have != want:
+        return False
+    have_env = existing.get("env") or existing.get("environment") or {}
+    want_env = desired.get("env") or desired.get("environment") or {}
+    if not isinstance(have_env, dict):
+        return False
+    return {k: str(v).replace("\\", "/") for k, v in have_env.items()} == \
+           {k: str(v).replace("\\", "/") for k, v in want_env.items()}
+
+
 def _installed(spec: AgentSpec, home: Path, appdata: Path, which: Callable[[str], str | None],
                registry_names: Iterable[str] = ()) -> bool:
     if any(which(c) for c in spec.commands):
@@ -286,8 +318,28 @@ def _status(spec: AgentSpec, home: Path, appdata: Path) -> str:
     except AgentError:
         return "unreadable"
     if isinstance(servers, list):  # e.g. Grok Bot's mcpBoxServers
-        return "connected" if any(isinstance(s, dict) and s.get("name") == SERVER_NAME for s in servers) else "not_connected"
-    return "connected" if isinstance(servers, dict) and SERVER_NAME in servers else "not_connected"
+        return "connected" if any(
+            isinstance(s, dict) and s.get("name") == SERVER_NAME
+            and _launches_this_install(s) for s in servers) else "not_connected"
+    if not isinstance(servers, dict) or SERVER_NAME not in servers:
+        return "not_connected"
+    # An entry that still points at a previous install reads as connected in
+    # every config file but dies at launch, which is how OpenCode kept failing
+    # while the dashboard called it healthy.
+    return "connected" if _launches_this_install(servers[SERVER_NAME]) else "not_connected"
+
+
+def _launches_this_install(entry: Any) -> bool:
+    """True when the entry starts this project's python with this module.
+
+    The memory home is deliberately not compared: the status question is
+    "will this launch work", and a different MEMBRAIN_HOME is a valid choice.
+    """
+    if not isinstance(entry, dict):
+        return False
+    parts = _launch_parts(entry)
+    want = [_python().as_posix(), "-m", "membrain.server"]
+    return [p.replace("\\", "/") for p in parts] == want
 
 
 def _registry_names() -> list[str]:
@@ -389,27 +441,40 @@ def connect(key: str, memory_home: Path, home: Path | None = None, appdata: Path
     if spec.style == "grokbot":
         if not isinstance(servers, list):
             raise AgentError("配置里的 MCP 列表格式特殊，不能自动修改。请改用复制提示词。")
-        if any(isinstance(s, dict) and s.get("name") == SERVER_NAME for s in servers):
+        desired = server_entry("standard", memory_home)
+        existing = next((s for s in servers
+                         if isinstance(s, dict) and s.get("name") == SERVER_NAME), None)
+        if existing is not None and _same_server(existing, desired):
             return {"ok": True, "changed": False, "backup": None}
     else:
         if not isinstance(servers, dict):
             raise AgentError("配置里的 MCP 部分格式特殊，不能自动修改。请改用复制提示词。")
-        if SERVER_NAME in servers:
+        desired = server_entry(spec.style, memory_home)
+        existing = servers.get(SERVER_NAME)
+        if existing is not None and _same_server(existing, desired):
             return {"ok": True, "changed": False, "backup": None}
+    repaired = existing is not None
     backup = None
     if path.exists():
         backup = path.with_name(f"{path.name}.bak-membrain-{datetime.now():%Y%m%d-%H%M%S}")
         shutil.copy2(path, backup)
     if spec.style == "grokbot":
         entry = server_entry("standard", memory_home)
-        servers.append({"name": SERVER_NAME, "command": entry["command"],
-                        "args": entry.get("args", []), "env": entry.get("env", {})})
+        replacement = {"name": SERVER_NAME, "command": entry["command"],
+                       "args": entry.get("args", []), "env": entry.get("env", {})}
+        for index, item in enumerate(servers):
+            if isinstance(item, dict) and item.get("name") == SERVER_NAME:
+                servers[index] = replacement
+                break
+        else:
+            servers.append(replacement)
     else:
         servers[SERVER_NAME] = server_entry(spec.style, memory_home)
     temp = path.with_name(path.name + ".membrain-tmp")
     temp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(temp, path)
-    return {"ok": True, "changed": True, "backup": backup.name if backup else None}
+    return {"ok": True, "changed": True, "repaired": repaired,
+            "backup": backup.name if backup else None}
 
 
 def disconnect(key: str, home: Path | None = None, appdata: Path | None = None) -> dict[str, Any]:

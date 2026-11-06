@@ -170,3 +170,43 @@ def test_specific_question_about_memory_project_does_not_request_an_overview(wor
     write(store, "Works on a memory project", "projects", FactType.PROJECT)
     retriever.reindex()
     assert retriever.recall("我的记忆项目是什么").mode == "hybrid"
+
+
+@pytest.mark.parametrize("query,expected", [
+    ("我的工作偏好是什么", "preferences"),
+    ("我有哪些偏好", "preferences"),
+    ("回顾一下我的工作习惯", "preferences"),
+    ("我的偏好", "preferences"),
+    ("我的饮食习惯", None),          # 具体话题，走相似度
+    ("我不喜欢什么样的回答方式", None),
+    ("服务器跑在哪个端口", None),
+])
+def test_qualified_category_questions_route_to_the_preference_overview(query, expected):
+    """「我的工作偏好是什么」和「我的偏好」是同一类问题。
+
+    只列出固定短语会漏掉中间夹一个名词的说法：查询落到相似度路径后一条都
+    找不到，因为没有任何一条偏好长得像「我的工作偏好」。
+    """
+    from membrain.retrieval import _overview_scope
+
+    assert _overview_scope(query) == expected
+
+
+@pytest.mark.parametrize("query,expected", [
+    ("我的工作偏好是什么", "preferences"),
+    ("我有哪些偏好", "preferences"),
+    ("回顾一下我的工作习惯", "preferences"),
+    ("我的偏好", "preferences"),
+    ("我的饮食习惯", None),          # 具体话题，走相似度
+    ("我不喜欢什么样的回答方式", None),
+    ("服务器跑在哪个端口", None),
+])
+def test_qualified_category_questions_route_to_the_preference_overview(query, expected):
+    """「我的工作偏好是什么」和「我的偏好」是同一类问题。
+
+    只列出固定短语会漏掉中间夹一个名词的说法：查询落到相似度路径后一条都
+    找不到，因为没有任何一条偏好长得像「我的工作偏好」。
+    """
+    from membrain.retrieval import _overview_scope
+
+    assert _overview_scope(query) == expected

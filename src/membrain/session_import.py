@@ -398,14 +398,19 @@ def _parse_dsh(path: Path) -> list[tuple[str, str]]:
         if kind not in ("user/message", "assistant/message"):
             continue
         role = "user" if kind == "user/message" else "assistant"
-        message = (rec.get("data") or {}).get("message") or {}
+        data = rec.get("data") or {}
+        # Newer builds put the user turn's content beside the id
+        # (data.content) while assistant turns keep data.message.content. Only
+        # reading the old shape silently produced zero user turns: 1125 turns
+        # parsed across 37 sessions, nothing ever captured.
+        message = data.get("message") if isinstance(data.get("message"), dict) else data
         text = _dsh_content_text(message.get("content"))
         if role == "user":
             text = _USER_TAG.sub("", _SYSREM.sub("", text)).strip()
         if not text:
             continue
         turns.append((role, _clip(text, MAX_TURN),
-                      _rec_ts_from(rec) or _rec_ts_from(rec.get("data")) or _rec_ts_from(message)))
+                      _rec_ts_from(rec) or _rec_ts_from(data) or _rec_ts_from(message)))
     return turns
 
 

@@ -92,6 +92,18 @@ def _overview_scope(query: str) -> str | None:
         return "all"
     if re.search(r"\b(?:what do you (?:remember|know) about me|(?:list|summari[sz]e|show) my (?:memories|memory))\b", text):
         return "all"
+    # "我的工作偏好是什么" is the same category ask as "我的偏好" with one noun
+    # in between. Listing the exact phrases missed every qualified variant, so a
+    # direct question about preferences fell through to similarity search and
+    # came back empty: no single preference resembles "我的工作偏好".
+    if re.search(
+        r"(?:我的?[\u4e00-\u9fa5]{0,6}(?:偏好|喜好|爱好|习惯|风格|口味|忌讳))"
+        r"|(?:我).{0,8}(?:喜欢什么|偏好什么|有哪些偏好|有哪些习惯)",
+        compact,
+    ) and re.search(r"(?:是什么|有哪些|都是什么|有什么|总结|概括|回顾|说说|列一下|列出|吗|？|\?)", compact):
+        return "preferences"
+    if re.search(r"\b(?:my|what are my)\b[^?]{0,30}\b(?:preferences|habits|interests|hobbies)\b", text):
+        return "preferences"
     return None
 
 
