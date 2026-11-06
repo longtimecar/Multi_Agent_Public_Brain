@@ -29,6 +29,8 @@ _NOISE_MAX_CONFIDENCE = 0.42
 _STALE_MAX_CONFIDENCE = 0.50
 _FORGET_DAYS = 90
 _NOISE_DAYS = 90
+# One embedding request per 16 claims: the whole-store request timed out.
+EMBED_BATCH = 16
 
 
 @dataclass(frozen=True)
@@ -108,14 +110,26 @@ class HealthScanner:
         return findings
 
     def _embed_claims(self, facts: list[Fact]):
-        """Normalised claim vectors, or None when embeddings are unavailable."""
+        """Normalised claim vectors, or None when embeddings are unavailable.
+
+        Embedded in batches: one request with every claim in the store timed out
+        on a real endpoint, and the timeout was swallowed, so the report quietly
+        fell back to word overlap while still looking authoritative.
+        """
         embedder = self.service.embedder
         if not embedder.enabled:
             return None
         try:
             import numpy as np
-            matrix = embedder.embed([fact.claim for fact in facts])
-            if matrix is None or not len(matrix):
+            chunks = []
+            for start in range(0, len(facts), EMBED_BATCH):
+                batch = [fact.claim for fact in facts[start:start + EMBED_BATCH]]
+                matrix = embedder.embed(batch)
+                if matrix is None or len(matrix) != len(batch):
+                    return None
+                chunks.append(matrix)
+            matrix = np.vstack(chunks)
+            if not len(matrix):
                 return None
             norms = np.linalg.norm(matrix, axis=1, keepdims=True)
             norms[norms == 0] = 1
