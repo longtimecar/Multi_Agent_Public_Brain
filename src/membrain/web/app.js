@@ -1304,13 +1304,20 @@ async function selectLibraryEntry(id, offset = 0) {
     content.innerHTML = `
       <div class="detail-top"><div><div class="memory-line"><span class="agent-chip">${escapeHtml(state.lib.labels[entry.category] || entry.category)}</span>${entry.date ? `<span class="panel-meta">${escapeHtml(entry.date)}</span>` : ''}</div>
       <h2 class="detail-title">${escapeHtml(entry.title)}</h2>
-      <p class="detail-id">${escapeHtml(librarySourceLabel(entry.source))} / ${escapeHtml(state.lib.labels[entry.category] || entry.category)} / ${escapeHtml(entry.id)}</p></div></div>
+      <p class="detail-id">${escapeHtml(librarySourceLabel(entry.source))} / ${escapeHtml(state.lib.labels[entry.category] || entry.category)} / ${escapeHtml(entry.id)}</p></div>
+      <button class="icon-button" id="lib-close-button" type="button" title="关闭" aria-label="关闭详情"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
       <div class="detail-section"><div class="detail-section-label">完整内容 · ${entry.total_chars} 字</div>
         <pre class="library-body">${escapeHtml(entry.text)}</pre>
         ${pager}
         ${hasMore ? '<p class="panel-subtitle">长文已分段；也可让 Agent 用 read_archive 分段读取。</p>' : ''}</div>
       <div class="detail-section"><div class="detail-meta"><div><span class="meta-label">来源</span><span class="meta-value">${escapeHtml(entry.origin || '—')}</span></div><div><span class="meta-label">范围</span><span class="meta-value">${escapeHtml(entry.scope || '—')}</span></div><div><span class="meta-label">日期</span><span class="meta-value">${escapeHtml(entry.date || '—')}</span></div></div></div>`;
     content.querySelectorAll('[data-lib-page]').forEach((btn) => btn.addEventListener('click', () => selectLibraryEntry(id, Number(btn.dataset.libPage))));
+    $('#lib-close-button')?.addEventListener('click', () => {
+      state.lib.selected = null;
+      content.classList.add('is-hidden');
+      empty.classList.remove('is-hidden');
+      renderLibraryList();
+    });
   } catch (error) { notify(error.message, true); }
 }
 
@@ -1343,7 +1350,21 @@ function renderRagList(items) {
       <span class="rag-item-title">${escapeHtml(doc.title)}</span>
       <span class="rag-item-meta">${escapeHtml(doc.category)} · ${doc.chunks} 段</span>
     </button>`).join('');
-  list.querySelectorAll('[data-rag-id]').forEach((el) => el.addEventListener('click', () => openRagDoc(el.dataset.ragId)));
+  list.querySelectorAll('[data-rag-id]').forEach((el) => el.addEventListener('click', () => {
+    const detail = $('#rag-detail');
+    if (state.ragSelected === el.dataset.ragId && detail && !detail.classList.contains('is-hidden')) {
+      closeRagDoc();
+    } else {
+      openRagDoc(el.dataset.ragId);
+    }
+  }));
+}
+
+function closeRagDoc() {
+  state.ragSelected = null;
+  const detail = $('#rag-detail');
+  if (detail) { detail.classList.add('is-hidden'); detail.innerHTML = ''; }
+  renderRagList();
 }
 
 async function openRagDoc(id) {
@@ -1357,15 +1378,18 @@ async function openRagDoc(id) {
     detail.innerHTML = `
       <div class="detail-top"><div><h2 class="detail-title">${escapeHtml(doc.title)}</h2>
       <p class="detail-id">${escapeHtml(doc.uri || doc.id)} · ${escapeHtml(doc.category)}</p></div>
-      <button class="button button-danger" id="rag-delete-button">删除</button></div>
+      <div class="panel-header-actions">
+        <button class="icon-button" id="rag-close-button" type="button" title="关闭" aria-label="关闭详情"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+        <button class="button button-danger" id="rag-delete-button">删除</button>
+      </div></div>
       <div class="detail-section"><div class="detail-section-label">内容分段 · ${doc.chunks}（检索时按段落定位）</div>
         ${(doc.chunk_list || []).map((c) => `<div class="rag-chunk"><span class="rag-chunk-seq">#${c.seq + 1}</span><p>${escapeHtml(c.text)}</p></div>`).join('')}
       </div>`;
+    $('#rag-close-button')?.addEventListener('click', closeRagDoc);
     $('#rag-delete-button')?.addEventListener('click', async () => {
       if (!window.confirm('删除这篇资料？')) return;
       await fetchJson('/api/rag/delete', { method: 'POST', body: JSON.stringify({ id }) });
-      state.ragSelected = null;
-      $('#rag-detail').classList.add('is-hidden');
+      closeRagDoc();
       notify('资料已删除');
       loadRag();
     });
