@@ -69,6 +69,11 @@ class Hit:
     fact: Fact
     lexical: float = 0.0
     semantic: float = 0.0
+    # A structured match on the type and day the question names ("我昨晚说的
+    # 任务"). It outranks topical similarity, so it needs its own field rather
+    # than being folded into lexical score where one strong semantic neighbour
+    # can push it off the first page.
+    typed: float = 0.0
 
 
 class Index:

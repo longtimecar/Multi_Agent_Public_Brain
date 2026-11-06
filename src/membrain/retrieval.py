@@ -303,9 +303,9 @@ class Retriever:
         for fid, score in typed.items():
             hit = got.get(fid)
             if hit is None:
-                got[fid] = Hit(fact=live[fid], lexical=score)
+                got[fid] = Hit(fact=live[fid], typed=score)
             else:
-                hit.lexical = max(hit.lexical, score)
+                hit.typed = max(hit.typed, score)
 
         mode = "lexical"
         if self.embedder.enabled:
@@ -375,10 +375,12 @@ class Retriever:
             dates = [e.date for e in hit.fact.evidence] or [hit.fact.valid_from]
             return 1.0 if any(lo <= d <= hi for d in dates) else 0.0
 
-        # Relevance decides the order; time match, confidence and recency break ties.
-        def key(hit: Hit) -> tuple[float, float, float, float]:
+        # A question that names a type and a day has an exact answer: those
+        # hits come first, then relevance, then time match, confidence, recency.
+        def key(hit: Hit) -> tuple[float, float, float, float, float]:
             age_days = max(0, (date.today() - hit.fact.valid_from).days)
-            return (round(rrf.get(hit.fact.id, 0.0), 9), in_window(hit), hit.fact.confidence, -age_days)
+            return (hit.typed, round(rrf.get(hit.fact.id, 0.0), 9), in_window(hit),
+                    hit.fact.confidence, -age_days)
 
         return sorted(hits.values(), key=key, reverse=True)
 
