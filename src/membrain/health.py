@@ -24,7 +24,12 @@ _NEVER_FORGET_TYPES = {FactType.PREFERENCE, FactType.CONSTRAINT}
 # candidates even at moderate confidence.
 _EPHEMERAL_TYPES = {FactType.EVENT, FactType.CASE, FactType.TOOL}
 
-_DUPLICATE_THRESHOLD = 0.88
+# Measured on this store with Qwen3-Embedding: claims that are related but
+# distinct ("likes cola" vs "loves coffee", two different TTS requirements)
+# reach 0.91, while restatements of the same fact score above 0.95. A 0.88 cut
+# therefore reported distinct memories as duplicates, and acting on them would
+# have merged away real detail.
+_DUPLICATE_THRESHOLD = 0.93
 _NOISE_MAX_CONFIDENCE = 0.42
 _STALE_MAX_CONFIDENCE = 0.50
 _FORGET_DAYS = 90
@@ -124,7 +129,7 @@ class HealthScanner:
     def _find_duplicates(self, facts: list[Fact]) -> list[Finding]:
         if len(facts) < 2:
             return []
-        matrix = self._embed_claims(facts)
+        matrix = self._claim_matrix(facts)
         findings: list[Finding] = []
         seen_pairs: set[tuple[str, str]] = set()
         for i in range(len(facts)):
@@ -148,6 +153,34 @@ class HealthScanner:
                     fingerprint=_fingerprint("duplicate", pair_key),
                 ))
         return findings
+
+    def _claim_matrix(self, facts: list[Fact]):
+        """Claim vectors, reusing the vectors the index already holds.
+
+        The duplicate detector re-embedded every live claim on each scan, which
+        is a network round trip per 16 memories and was the reason a health
+        check took tens of seconds. Every live fact is already embedded for
+        search, so the scan can read those and finish without a request.
+        """
+        index = getattr(self.service, "index", None)
+        embedder = self.service.embedder
+        if index is not None and getattr(embedder, "enabled", False):
+            try:
+                if index.model_matches(embedder.model):
+                    ids, matrix = index.vector_matrix()
+                    if matrix is not None and len(ids) == len(matrix):
+                        import numpy as np
+
+                        position = {fid: i for i, fid in enumerate(ids)}
+                        rows = [position.get(fact.id) for fact in facts]
+                        if all(row is not None for row in rows):
+                            picked = matrix[[int(row) for row in rows]]
+                            norms = np.linalg.norm(picked, axis=1, keepdims=True)
+                            norms[norms == 0] = 1
+                            return picked / norms
+            except Exception:  # a broken index must fall back, not fail the scan
+                pass
+        return self._embed_claims(facts)
 
     def _embed_claims(self, facts: list[Fact]):
         """Normalised claim vectors, or None when embeddings are unavailable.

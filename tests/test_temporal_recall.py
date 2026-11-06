@@ -616,3 +616,127 @@ def test_idle_sessions_detects_quiet_conversations(rig):
                            ep("e3", "刚刚的对话", now - timedelta(minutes=5), session="s2")])
     idle = consolidate.idle_sessions(store, idle_minutes=60, now=now)
     assert "s1" in idle and "s2" not in idle
+
+
+def _beverage(store, claim, episode_id):
+    from membrain.models import Evidence
+
+    return store.write_fact(store.draft_fact(
+        type=FactType.PREFERENCE, subject="beverage", claim=claim,
+        evidence=[Evidence(episode=episode_id, quote=claim, date=date.today(), origin="stated")],
+        source_agent="test", source_session="s1"))
+
+
+def test_related_but_distinct_memories_are_not_duplicates(rig):
+    """「爱喝可乐」和「爱喝咖啡」实测相似度 0.90，但它们不是同一条。
+
+    阈值定在 0.88 时，健康页把这类"同品类不同事实"报成重复；照着合并会把
+    真实偏好揉成一句。这里的两个数字来自真实库的测量。
+    """
+    import numpy as np
+
+    from membrain.health import HealthScanner
+
+    _, store, _, _, svc = rig
+    cola = _beverage(store, "Likes drinking cola", "e1")
+    coffee = _beverage(store, "Loves drinking coffee", "e2")
+    scanner = HealthScanner(svc, since_use=lambda fact: 0)
+
+    def matrix(similarity: float):
+        return np.array([[1.0, 0.0],
+                         [similarity, (1 - similarity ** 2) ** 0.5]], dtype=np.float32)
+
+    scanner._claim_matrix = lambda facts: matrix(0.90)
+    assert scanner._find_duplicates([cola, coffee]) == [], "不同事实不能报重复"
+
+    scanner._claim_matrix = lambda facts: matrix(0.97)
+    assert scanner._find_duplicates([cola, coffee]), "同一句话的改写应该被识别"
+
+
+def test_health_reuses_indexed_vectors_instead_of_embedding_again(rig):
+    """全量健康扫描原先把每条记忆重新嵌入一次，这才是它要几十秒的原因。"""
+    from membrain.health import HealthScanner
+
+    _, store, index, retriever, _ = rig
+    fact = _beverage(store, "Likes drinking cola", "e1")
+    retriever.sync_fact(fact)
+
+    class _NoNetwork:
+        enabled = True
+        model = retriever.embedder.model
+
+        def embed(self, *args, **kwargs):
+            raise AssertionError("索引里已有向量，扫描不应再请求嵌入")
+
+    class _Service:
+        def __init__(self):
+            self.store, self.retriever, self.index = store, retriever, index
+            self.embedder = _NoNetwork()
+
+        def disabled_agents(self):
+            return set()
+
+    matrix = HealthScanner(_Service(), since_use=lambda f: 0)._claim_matrix([fact])
+    assert matrix is not None and len(matrix) == 1
+
+
+def _beverage(store, claim, episode_id):
+    from membrain.models import Evidence
+
+    return store.write_fact(store.draft_fact(
+        type=FactType.PREFERENCE, subject="beverage", claim=claim,
+        evidence=[Evidence(episode=episode_id, quote=claim, date=date.today(), origin="stated")],
+        source_agent="test", source_session="s1"))
+
+
+def test_related_but_distinct_memories_are_not_duplicates(rig):
+    """「爱喝可乐」和「爱喝咖啡」实测相似度 0.90，但它们不是同一条。
+
+    阈值定在 0.88 时，健康页把这类"同品类不同事实"报成重复；照着合并会把
+    真实偏好揉成一句。这里的两个数字来自真实库的测量。
+    """
+    import numpy as np
+
+    from membrain.health import HealthScanner
+
+    _, store, _, _, svc = rig
+    cola = _beverage(store, "Likes drinking cola", "e1")
+    coffee = _beverage(store, "Loves drinking coffee", "e2")
+    scanner = HealthScanner(svc, since_use=lambda fact: 0)
+
+    def matrix(similarity: float):
+        return np.array([[1.0, 0.0],
+                         [similarity, (1 - similarity ** 2) ** 0.5]], dtype=np.float32)
+
+    scanner._claim_matrix = lambda facts: matrix(0.90)
+    assert scanner._find_duplicates([cola, coffee]) == [], "不同事实不能报重复"
+
+    scanner._claim_matrix = lambda facts: matrix(0.97)
+    assert scanner._find_duplicates([cola, coffee]), "同一句话的改写应该被识别"
+
+
+def test_health_reuses_indexed_vectors_instead_of_embedding_again(rig):
+    """全量健康扫描原先把每条记忆重新嵌入一次，这才是它要几十秒的原因。"""
+    from membrain.health import HealthScanner
+
+    _, store, index, retriever, _ = rig
+    fact = _beverage(store, "Likes drinking cola", "e1")
+    retriever.sync_fact(fact)
+
+    class _NoNetwork:
+        enabled = True
+        model = retriever.embedder.model
+
+        def embed(self, *args, **kwargs):
+            raise AssertionError("索引里已有向量，扫描不应再请求嵌入")
+
+    class _Service:
+        def __init__(self):
+            self.store, self.retriever, self.index = store, retriever, index
+            self.embedder = _NoNetwork()
+
+        def disabled_agents(self):
+            return set()
+
+    matrix = HealthScanner(_Service(), since_use=lambda f: 0)._claim_matrix([fact])
+    assert matrix is not None and len(matrix) == 1
