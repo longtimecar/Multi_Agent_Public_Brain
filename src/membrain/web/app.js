@@ -1,5 +1,5 @@
 const state = { facts: [], factTotal: null, factsTruncated: false, selected: null, episodes: [], episodeTotal: 0, episodeAgent: '', filters: { q: '', status: '', type: '' }, tree: { type: '', subject: '' }, currentView: 'chat', dialog: null, sourceLabels: {},
-  memoryLimit: 8, chat: { sessionId: null, messages: [], memory: [], sending: false }, model: null };
+  memoryLimit: 8, chat: { sessionId: null, messages: [], memory: [], library: [], sending: false }, model: null };
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 
@@ -161,9 +161,14 @@ function renderChat() {
 
 function renderMemorySources() {
   const list = $('#chat-memory-list');
-  $('#chat-memory-count').textContent = state.chat.memory.length;
-  list.innerHTML = state.chat.memory.length ? state.chat.memory.map((item) => `
-    <div class="memory-source-item"><div class="memory-source-top"><span>${escapeHtml(item.subject)}</span>${statusBadge(item.status)}</div><p>${escapeHtml(item.claim)}</p><span class="memory-source-meta">${Math.round((item.confidence || 0) * 100)}% confidence · ${escapeHtml(item.id)}</span></div>`).join('') : '<div class="side-empty">发送消息后，这里会列出召回的记忆。</div>';
+  const memories = state.chat.memory || [];
+  const library = state.chat.library || [];
+  $('#chat-memory-count').textContent = memories.length + library.length;
+  const memoryHtml = memories.map((item) => `
+    <div class="memory-source-item"><div class="memory-source-top"><span>${escapeHtml(item.subject)}</span>${statusBadge(item.status)}</div><p>${escapeHtml(item.claim)}</p><span class="memory-source-meta">${Math.round((item.confidence || 0) * 100)}% confidence · ${escapeHtml(item.id)}</span></div>`).join('');
+  const libraryHtml = library.map((item) => `
+    <div class="memory-source-item"><div class="memory-source-top"><span>资料库</span></div><p>${escapeHtml(item.title || item.id)}</p><span class="memory-source-meta">${escapeHtml(item.id)}</span></div>`).join('');
+  list.innerHTML = (memoryHtml + libraryHtml) || '<div class="side-empty">发送消息后，这里会列出召回的记忆和资料。</div>';
 }
 
 function renderModel(data) {
@@ -438,7 +443,7 @@ async function loadData() {
 function newChat() {
   localStorage.removeItem('membrain.activeChat');
   localStorage.removeItem('membrain.lastMemory');
-  state.chat = { sessionId: null, messages: [], memory: [], sending: false };
+  state.chat = { sessionId: null, messages: [], memory: [], library: [], sending: false };
   renderChat();
   renderMemorySources();
   $('#chat-input').focus();
@@ -466,6 +471,7 @@ async function sendChat(event) {
     state.chat.sessionId = result.session_id;
     state.chat.messages.push({ role: 'assistant', content: result.answer || '模型没有返回文字。' });
     state.chat.memory = result.memory || [];
+    state.chat.library = result.library || [];
     try { localStorage.setItem('membrain.lastMemory', JSON.stringify(state.chat.memory)); } catch { /* storage may be disabled */ }
     renderChat();
     renderMemorySources();
@@ -544,6 +550,7 @@ async function openChatSession(sessionId) {
     state.chat.sessionId = saved.session_id;
     state.chat.messages = saved.messages || [];
     state.chat.memory = [];
+    state.chat.library = [];
     localStorage.setItem('membrain.activeChat', sessionId);
     renderChat();
     renderMemorySources();
