@@ -343,3 +343,99 @@ def test_locate_quote_accepts_ellipsis_citation_by_recording_a_real_span():
     assert locate_quote(text, "先备份要改的文件...我从来没说过的话") is None
     # Fragments that exist but not in this order do not pass.
     assert locate_quote(text, "然后把规则加入长期指令...先备份要改的文件") is None
+
+
+class _BrokenEmbedder:
+    """An endpoint that refuses every request, like a batch that is too large."""
+
+    enabled = True
+    model = "broken"
+
+    def embed(self, texts, **kwargs):
+        from membrain.embeddings import EmbeddingError
+
+        raise EmbeddingError("request failed")
+
+
+def test_extraction_survives_a_broken_embedding_endpoint(extractor):
+    """A dead embedder must not cost the session its memories.
+
+    Dedupe used to embed the new claim together with every live fact; the
+    endpoint refused that batch, the failure raised, and the whole session wrote
+    nothing while the log read like a routine skip.
+    """
+    settings, store, index, _ = extractor
+    for i in range(30):
+        write(store, f"Prior claim {i}", f"subject-{i}", FactType.FACT)
+    store.append_episodes([episode("e1", "user", "I do not eat spicy food."),
+                           episode("a1", "assistant", "Noted.")])
+    retriever = Retriever(store, index, _BrokenEmbedder(), settings)
+    llm = FakeLLMClient([
+        {"operations": [{"op": "add", "type": "preference", "subject": "dietary",
+                         "claim": "Does not eat spicy food", "episode": "e1",
+                         "quote": "I do not eat spicy food."}]},
+        {"duplicate_id": None},
+    ])
+    report = Extractor(store, retriever, llm).run("s1")
+    assert report.facts_added == 1, report.errors
+    assert not any("embedding" in e for e in report.errors)
+    assert any(f.claim == "Does not eat spicy food" for f in store.live_facts())
+
+
+def test_duplicate_pool_is_bounded(extractor):
+    """The comparison set stays small even when the store is large."""
+    _, store, _, retriever = extractor
+    for i in range(80):
+        write(store, f"Claim number {i}", f"subject-{i}", FactType.FACT)
+    ext = Extractor(store, retriever, FakeLLMClient([]))
+    live = store.live_facts()
+    pool = ext._duplicate_candidates("dietary", "Does not eat spicy food", live)
+    assert len(pool) <= 40
+
+
+class _BrokenEmbedder:
+    """An endpoint that refuses every request, like a batch that is too large."""
+
+    enabled = True
+    model = "broken"
+
+    def embed(self, texts, **kwargs):
+        from membrain.embeddings import EmbeddingError
+
+        raise EmbeddingError("request failed")
+
+
+def test_extraction_survives_a_broken_embedding_endpoint(extractor):
+    """A dead embedder must not cost the session its memories.
+
+    Dedupe used to embed the new claim together with every live fact; the
+    endpoint refused that batch, the failure raised, and the whole session wrote
+    nothing while the log read like a routine skip.
+    """
+    settings, store, index, _ = extractor
+    for i in range(30):
+        write(store, f"Prior claim {i}", f"subject-{i}", FactType.FACT)
+    store.append_episodes([episode("e1", "user", "I do not eat spicy food."),
+                           episode("a1", "assistant", "Noted.")])
+    retriever = Retriever(store, index, _BrokenEmbedder(), settings)
+    llm = FakeLLMClient([
+        {"operations": [{"op": "add", "type": "preference", "subject": "dietary",
+                         "claim": "Does not eat spicy food", "episode": "e1",
+                         "quote": "I do not eat spicy food."}]},
+        {"duplicate_id": None},
+    ])
+    report = Extractor(store, retriever, llm).run("s1")
+    assert report.facts_added == 1, report.errors
+    assert not any("embedding" in e for e in report.errors)
+    assert any(f.claim == "Does not eat spicy food" for f in store.live_facts())
+
+
+def test_duplicate_pool_is_bounded(extractor):
+    """The comparison set stays small even when the store is large."""
+    _, store, _, retriever = extractor
+    for i in range(80):
+        write(store, f"Claim number {i}", f"subject-{i}", FactType.FACT)
+    ext = Extractor(store, retriever, FakeLLMClient([]))
+    live = store.live_facts()
+    pool = ext._duplicate_candidates("dietary", "Does not eat spicy food", live)
+    assert len(pool) <= 40

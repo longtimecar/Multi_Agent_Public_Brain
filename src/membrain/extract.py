@@ -99,6 +99,14 @@ def _normal(text: str) -> str:
     return " ".join(text.casefold().split())
 
 
+def _overlap_terms(text: str) -> set[str]:
+    """Cheap wording fingerprint: CJK bigrams plus ascii words."""
+    low = _normal(text)
+    cjk = {low[i:i + 2] for i in range(len(low) - 1)
+           if "\u4e00" <= low[i] <= "\u9fff" and "\u4e00" <= low[i + 1] <= "\u9fff"}
+    return cjk | set(re.findall(r"[a-z0-9_]{3,}", low))
+
+
 def _explicit_change(text: str) -> bool:
     low = text.casefold()
     return any(token in low for token in (
@@ -331,6 +339,36 @@ class Extractor:
         )
         return system, payload
 
+    def _duplicate_candidates(self, subject: str, claim: str, live: list["Fact"],
+                              limit: int = 40) -> list["Fact"]:
+        """Narrow the comparison set before spending an embedding request.
+
+        Comparing a new claim against every live fact meant one embed call with
+        hundreds of inputs per add. The endpoint refused it, and because the
+        failure raised, an entire session wrote nothing. Wording overlap plus a
+        shared subject is a cheap first pass; recent facts are appended as a
+        catch-all so a duplicate phrased with no shared words is still seen.
+        """
+        terms = _overlap_terms(f"{subject} {claim}")
+        scored: list[tuple[int, "Fact"]] = []
+        for fact in live:
+            hay = _normal(f"{fact.subject} {fact.claim}")
+            score = sum(1 for term in terms if term in hay)
+            if fact.subject == subject:
+                score += 2
+            if score:
+                scored.append((score, fact))
+        scored.sort(key=lambda item: item[0], reverse=True)
+        picked = [fact for _, fact in scored[:limit]]
+        if len(picked) < limit:
+            seen = {fact.id for fact in picked}
+            for fact in sorted(live, key=lambda f: f.valid_from, reverse=True):
+                if len(picked) >= limit:
+                    break
+                if fact.id not in seen:
+                    picked.append(fact)
+        return picked
+
     def _duplicate(self, subject: str, claim: str) -> Fact | None:
         live = self.store.live_facts()
         canonical = _normal(claim)
@@ -340,19 +378,20 @@ class Extractor:
         live = [fact for fact in live if fact.type != FactType.CONSTRAINT]
         if not live:
             return None
-        by_id = {fact.id: fact for fact in live}
-        candidates = live
+        pool = self._duplicate_candidates(subject, claim, live)
+        candidates = pool
         if self.retriever.embedder.enabled:
             try:
                 vectors = self.retriever.embedder.embed(
-                    [f"{subject}\n{claim}"] + [f"{fact.subject}\n{fact.claim}" for fact in live])
-            except EmbeddingError as exc:
-                raise LLMError("cannot check duplicates: embedding request failed") from exc
-            if vectors is None:
-                raise LLMError("cannot check duplicates: embeddings unavailable")
-            scores = vectors[1:] @ vectors[0]
-            candidates = [live[int(i)] for i in scores.argsort()[::-1]
-                          if float(scores[int(i)]) >= self.retriever.settings.duplicate_floor]
+                    [f"{subject}\n{claim}"] + [f"{fact.subject}\n{fact.claim}" for fact in pool])
+            except EmbeddingError:
+                # A slow or refusing embedding endpoint must not stop memories
+                # from being written; fall back to the wording-based pool.
+                vectors = None
+            if vectors is not None:
+                scores = vectors[1:] @ vectors[0]
+                candidates = [pool[int(i)] for i in scores.argsort()[::-1]
+                              if float(scores[int(i)]) >= self.retriever.settings.duplicate_floor]
         if not candidates:
             return None
         result = self.llm.complete_json(
@@ -369,7 +408,7 @@ class Extractor:
         if selected is not None and selected not in {f.id for f in candidates[:10]}:
             raise LLMError("duplicate decision referenced an unknown candidate")
         if selected:
-            return by_id[selected]
+            return next(fact for fact in candidates if fact.id == selected)
         return None
 
     def _apply(self, op: dict[str, Any], episodes: dict[str, Episode], report: ExtractionReport) -> None:
