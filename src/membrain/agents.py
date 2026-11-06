@@ -572,6 +572,8 @@ def display_name(name: str) -> str:
     """
     key = agent_key(name)
     for spec in SPECS:
-        if spec.key == key:
+        # Some writers use a short alias ("dsh") that only exists in `match`,
+        # so the key alone is not enough to recover the product name.
+        if spec.key == key or key in spec.match:
             return spec.name
     return (name or "unknown").strip() or "unknown"
