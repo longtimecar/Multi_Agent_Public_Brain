@@ -376,7 +376,9 @@ class Store:
             # A merge continues an existing memory; stamping "now" would make an
             # old statement look like it was first recorded today.
             **({"created_at": created_at} if created_at is not None else {}),
-            valid_from=max(e.date for e in evidence),
+            # A memory is valid from the first time it was stated, not from the
+            # most recent confirmation; corroboration must not move the date.
+            valid_from=min(e.date for e in evidence),
             supersedes=supersedes,
             source={"agent": source_agent, "session": source_session},
             peer=peer,
