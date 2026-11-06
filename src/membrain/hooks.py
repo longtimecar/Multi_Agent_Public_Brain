@@ -520,12 +520,13 @@ def _note_auto_commit(svc: MemoryService, session: str, text: str) -> None:
             threshold=svc.settings.auto_commit_token_threshold,
             idle_minutes=svc.settings.auto_commit_idle_minutes,
         )
-        pending = auto_commit.take_pending(svc.store)
+        pending = auto_commit.pending_sessions(svc.store)
         if pending:
-            # re-mark was cleared by take_pending; Phase1 uses explicit session list
-            from . import session_archive
-            phase1 = session_archive.commit_sessions(svc.store, pending, reason="token_or_idle")
-            if any(item.get("archived") for item in phase1):
+            # Write before clearing: commit_pending_with_archive retires a
+            # session only after its archive write returned, and leaves the
+            # rest queued when one of them fails.
+            result = auto_commit.commit_pending_with_archive(svc.store, reason="token_or_idle")
+            if any(item.get("archived") for item in result["phase1"]):
                 _start_session_archive_phase2(svc)
             else:
                 _start_extractor(svc)
@@ -600,21 +601,21 @@ def run(event: str) -> int:
             # Does NOT modify any protected agent config; callers opt in.
             _note_auto_commit(svc, session, str(payload.get("prompt") or ""))
             from . import auto_commit, session_archive
-            pending = auto_commit.take_pending(svc.store)
-            # Force Phase1 for explicit precompact even below threshold
-            sessions = list(pending)
-            if event == "precompact" and session and session != "unknown" and session not in sessions:
-                sessions.append(session)
-            phase1 = []
-            if sessions:
-                phase1 = session_archive.commit_sessions(svc.store, sessions, reason=event)
-                if any(item.get("archived") for item in phase1):
-                    _start_session_archive_phase2(svc)
-                else:
-                    _start_extractor(svc)
-            elif event == "precompact":
+            pending = auto_commit.pending_sessions(svc.store)
+            # Queue first, retire after the write: a failed archive keeps the
+            # session pending instead of dropping it.
+            result = auto_commit.commit_pending_with_archive(svc.store, reason=event)
+            phase1 = list(result["phase1"])
+            # Force Phase1 for explicit precompact even below threshold.
+            if event == "precompact" and session and session != "unknown" and session not in pending:
+                phase1.append(session_archive.phase1_commit(svc.store, session, reason=event))
+            if any(item.get("archived") for item in phase1):
+                _start_session_archive_phase2(svc)
+            elif phase1 or event == "precompact":
                 _start_extractor(svc)
-            print(json.dumps({"auto_commit": True, "pending": pending, "phase1": phase1, "event": event}, ensure_ascii=False), file=sys.stderr)
+            print(json.dumps({"auto_commit": True, "pending": pending, "phase1": phase1,
+                              "errors": result["errors"], "event": event}, ensure_ascii=False),
+                  file=sys.stderr)
     except Exception as exc:  # a hook must never break the user's turn
         print(f"membrain hook error: {exc}", file=sys.stderr)
         return 0

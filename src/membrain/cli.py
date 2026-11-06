@@ -207,21 +207,25 @@ def cmd_auto_commit(args: argparse.Namespace) -> int:
     from .llm import LLMClient
 
     svc = _svc()
-    pending = auto_commit.check_idle(
+    auto_commit.check_idle(
         svc.store,
         threshold=svc.settings.auto_commit_token_threshold,
         idle_minutes=svc.settings.auto_commit_idle_minutes,
     )
-    taken = auto_commit.take_pending(svc.store)
-    sessions = sorted(set(pending) | set(taken))
-    if args.session:
-        sessions = sorted(set(sessions) | {args.session})
-    if not sessions and not args.force:
-        print(json.dumps({"pending": [], "phase1": [], "phase2": []}, ensure_ascii=False))
-        return 0
-    if args.force and args.session and args.session not in sessions:
+    # Write-then-clear: a session leaves the queue only after its archive write
+    # returned, so a failed run leaves it pending for the next attempt instead
+    # of dropping the conversation.
+    result = auto_commit.commit_pending_with_archive(svc.store, reason="cli-auto-commit")
+    phase1 = list(result["phase1"])
+    sessions = list(result["sessions"])
+    if args.session and args.session not in sessions:
+        # An explicitly named session was never queued; commit it directly.
+        phase1.append(session_archive.phase1_commit(svc.store, args.session, reason="cli-auto-commit"))
         sessions.append(args.session)
-    phase1 = session_archive.commit_sessions(svc.store, sessions, reason="cli-auto-commit") if sessions else []
+    if not sessions and not args.force:
+        print(json.dumps({"pending": [], "phase1": [], "phase2": [], "errors": result["errors"]},
+                         ensure_ascii=False))
+        return 0
     phase2 = []
     for item in phase1:
         if item.get("archived") and item.get("archive_path"):
@@ -234,11 +238,13 @@ def cmd_auto_commit(args: argparse.Namespace) -> int:
         report = Extractor(svc.store, svc.retriever, LLMClient(svc.settings)).run(
             args.session if args.session else None
         )
-        print(json.dumps({"pending": sessions, "phase1": phase1, "extract": report.as_dict()}, ensure_ascii=False, indent=2))
+        print(json.dumps({"pending": sessions, "phase1": phase1, "errors": result["errors"],
+                          "extract": report.as_dict()}, ensure_ascii=False, indent=2))
         return 0 if not report.errors else 1
     print(json.dumps({
         "pending": sessions,
         "phase1": phase1,
+        "errors": result["errors"],
         "phase2": [{"status": p.get("status"), "archive_path": p.get("archive_path"),
                     "summary": (p.get("diff") or {}).get("summary")} for p in phase2],
     }, ensure_ascii=False, indent=2))
