@@ -217,12 +217,23 @@ def _running_images() -> set[str]:
     try:
         import subprocess
 
+        # Read bytes, not text. tasklist prints in the console codepage, and a
+        # single non-ASCII process name used to make the text-mode reader fail,
+        # leaving stdout None and taking the whole agent scan down with it.
         out = subprocess.run(["tasklist", "/fo", "csv", "/nh"], capture_output=True,
-                             text=True, timeout=8, creationflags=0x08000000)
+                             timeout=8, creationflags=0x08000000)
     except Exception:
         return set()
+    raw = out.stdout or b""
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            text = raw.decode("mbcs", "replace")
+        except (LookupError, UnicodeDecodeError):
+            text = raw.decode("utf-8", "replace")
     names: set[str] = set()
-    for line in out.stdout.splitlines():
+    for line in text.splitlines():
         match = re.match(r'"([^"]+)"', line.strip())
         if match:
             names.add(match.group(1).lower())

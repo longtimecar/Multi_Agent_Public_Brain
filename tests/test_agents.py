@@ -181,3 +181,71 @@ def test_marvis_is_detected_but_prompt_only(tmp_path):
     assert items["marvis"]["installed"] is True
     assert items["marvis"]["can_connect"] is False
     assert items["grok-bot"]["installed"] is False
+
+
+def test_process_scan_survives_non_utf8_tasklist_output(monkeypatch):
+    """A Chinese process name must not take the whole agent scan down.
+
+    tasklist prints in the console codepage; decoding it as UTF-8 raised inside
+    the reader thread, stdout came back None, and doctor/agents failed with an
+    AttributeError far from the real cause.
+    """
+    import subprocess
+
+    payload = ('"chrome.exe","1234","Console","1","100 K"\r\n'
+               '"天翼云盘.exe","5678","Console","1","100 K"\r\n').encode("gbk")
+
+    class Done:
+        stdout = payload
+        returncode = 0
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: Done())
+    monkeypatch.setattr(agents.os, "name", "nt")
+    images = agents._running_images()
+    assert "chrome.exe" in images
+
+
+def test_process_scan_tolerates_empty_output(monkeypatch):
+    import subprocess
+
+    class Done:
+        stdout = None
+        returncode = 1
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: Done())
+    monkeypatch.setattr(agents.os, "name", "nt")
+    assert agents._running_images() == set()
+
+
+def test_process_scan_survives_non_utf8_tasklist_output(monkeypatch):
+    """A Chinese process name must not take the whole agent scan down.
+
+    tasklist prints in the console codepage; decoding it as UTF-8 raised inside
+    the reader thread, stdout came back None, and doctor/agents failed with an
+    AttributeError far from the real cause.
+    """
+    import subprocess
+
+    payload = ('"chrome.exe","1234","Console","1","100 K"\r\n'
+               '"天翼云盘.exe","5678","Console","1","100 K"\r\n').encode("gbk")
+
+    class Done:
+        stdout = payload
+        returncode = 0
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: Done())
+    monkeypatch.setattr(agents.os, "name", "nt")
+    images = agents._running_images()
+    assert "chrome.exe" in images
+
+
+def test_process_scan_tolerates_empty_output(monkeypatch):
+    import subprocess
+
+    class Done:
+        stdout = None
+        returncode = 1
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: Done())
+    monkeypatch.setattr(agents.os, "name", "nt")
+    assert agents._running_images() == set()
