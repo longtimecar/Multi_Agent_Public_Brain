@@ -3,9 +3,12 @@
 Read-only on every source. One session becomes one archive entry. The LLM
 cleans and classifies each session (category + title + L0 abstract) and flags
 noise; rule-based noise filters run first so junk never costs an LLM call.
-Content-hash entry ids make reruns free. Batch manifests reuse the OpenViking
-import/batches/undo bookkeeping unchanged. Fact distillation is opt-in and
-quote-verified. LLM failure is fail-open: the entry still lands with
+Content-hash entry ids make reruns free. Each import writes its batch manifest
+twice: `in_progress` before the first archive write, `completed` only after the
+whole pass succeeds, so a crash always leaves a batch a rerun can resume instead
+of half-written archive state with no record. Batch manifests reuse the
+OpenViking import/batches/undo bookkeeping unchanged. Fact distillation is
+opt-in and quote-verified. LLM failure is fail-open: the entry still lands with
 rule-based fields and can be reclassified later.
 """
 
@@ -1009,6 +1012,95 @@ def _distill_entry(llm: Any, entry: ArchiveEntry) -> tuple[list[dict[str, str]],
     return ov.distill(llm, entry, system=SESSION_DISTILL_SYSTEM)
 
 
+# ---------------------------------------------------------------- batch manifest
+
+# A batch lands in imports/<batch>.json at three points: "in_progress" before
+# the first archive write, again after every session, and once more when the pass
+# ends. Only an error-free pass flips it to "completed"; a hard failure leaves
+# "in_progress" so the next run adopts the same batch id and keeps going.
+IMPORT_SOURCE = "session-import"
+STATUS_RUNNING = "in_progress"
+STATUS_DONE = "completed"
+STATUS_PARTIAL = "partial"          # pass finished, but sessions or facts were lost
+
+STEP_CLEAN = "清洗"
+STEP_CLASSIFY = "分类"
+STEP_WRITE = "归档写入"
+STEP_SYNC = "archive 同步"
+STEP_DISTILL = "事实提炼"
+STEP_MANIFEST = "清单写入"
+
+_COUNTERS = ("archived_new", "archive_existing", "noise_skipped", "facts_added",
+             "facts_duplicate", "rejected", "not_selected", "skipped")
+
+
+def _manifest_path(svc: Any, batch: str) -> Path:
+    folder = Path(svc.settings.home) / "imports"
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / f"{batch}.json"
+
+
+def load_manifest(svc: Any, batch: str) -> dict[str, Any] | None:
+    try:
+        data = json.loads(_manifest_path(svc, batch).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _save_manifest(svc: Any, manifest: dict[str, Any]) -> None:
+    manifest["updated"] = datetime.now(timezone.utc).isoformat()
+    _atomic_write(_manifest_path(svc, manifest["batch"]),
+                  json.dumps(manifest, ensure_ascii=False, indent=2))
+
+
+def pending_batches(svc: Any) -> list[dict[str, Any]]:
+    """Imports that started and never finished (crash, kill, abort). Newest first.
+
+    These are the batches a rerun may adopt. `partial` batches are deliberately
+    excluded: their pass ended, so retrying them is a fresh batch, not a resume.
+    """
+    folder = Path(svc.settings.home) / "imports"
+    if not folder.is_dir():
+        return []
+    out: list[dict[str, Any]] = []
+    for path in folder.glob("b_*.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if (isinstance(data, dict) and data.get("source") == IMPORT_SOURCE
+                and data.get("status") == STATUS_RUNNING):
+            out.append(data)
+    return sorted(out, key=lambda m: str(m.get("created") or ""), reverse=True)
+
+
+def _selection(sources: list[str] | None, only_set: set[str] | None) -> tuple[Any, Any]:
+    return (sorted(sources) if sources is not None else None,
+            sorted(only_set) if only_set is not None else None)
+
+
+def _resume_target(svc: Any, sources: list[str] | None,
+                   only_set: set[str] | None) -> dict[str, Any] | None:
+    """Pending batch started with the same selection, if any.
+
+    Same selection means the rerun is the continuation of that batch, not a
+    different request; adopting it keeps one batch id over the whole set so
+    undo still covers everything the two runs archived.
+    """
+    want = _selection(sources, only_set)
+    for manifest in pending_batches(svc):
+        if (manifest.get("sources"), manifest.get("only")) == want:
+            return manifest
+    return None
+
+
+def _step_error(where: str, step: str, exc: BaseException) -> str:
+    """`<session>｜<step>失败: <reason>` — every error says both."""
+    detail = str(exc)[:160] or exc.__class__.__name__
+    return f"{where}｜{step}失败: {detail}"
+
+
 def apply_import(svc: Any, llm: Any, sources: list[str] | None = None,
                  distill_facts: bool = False, progress: Any = None,
                  only: list[str] | None = None, skip: list[str] | None = None,
@@ -1018,6 +1110,16 @@ def apply_import(svc: Any, llm: Any, sources: list[str] | None = None,
     only:  import just these session keys (None = everything eligible).
     skip / unskip / clear_skips: manage the persistent ignore list first;
     ignored sessions are neither imported nor offered again until restored.
+
+    Crash safety: the batch manifest is written as `in_progress` (batch id,
+    selection, every session key, the cursor) before the first archive write and
+    refreshed after each session. A failure aborts the pass, leaves the manifest
+    `in_progress` and re-raises naming the session and step, so the archive is
+    never half-written with no record of why. A rerun with the same selection
+    adopts that batch id and continues: entries already on disk are recognised by
+    (source, scope, origin, content_hash), so finished sessions are counted as
+    existing instead of being archived twice. Only an error-free pass flips the
+    manifest to `completed`.
     """
     from datetime import date as _date
 
@@ -1029,87 +1131,150 @@ def apply_import(svc: Any, llm: Any, sources: list[str] | None = None,
         # Picking a previously ignored session means it is wanted after all.
         update_skips(svc, remove=list(only_set))
         skips = load_skips(svc)
-    batch = "b_" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
     cache = _load_cache(svc)
     sessions = collect(sources)
-    report: dict[str, Any] = {"batch": batch, "total": len(sessions), "archived_new": 0, "archive_existing": 0,
-                              "noise_skipped": 0, "facts_added": 0, "facts_duplicate": 0, "rejected": 0,
-                              "not_selected": 0, "skipped": 0,
-                              "errors": []}
-    archive_ids: list[str] = []
-    entries: list[ArchiveEntry] = []
-    for n, rs in enumerate(sessions, 1):
-        if progress:
-            progress({"stage": "cleaning", "done": n - 1, "total": len(sessions)})
+    session_keys = [_session_key(rs) for rs in sessions]
+
+    previous = _resume_target(svc, sources, only_set)
+    started = datetime.now(timezone.utc).isoformat()
+    batch = (previous or {}).get("batch") or "b_" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
+    created = str((previous or {}).get("created") or started)
+    # Kept across a resume so undo_one_batch still covers the earlier run's work.
+    archive_ids: list[str] = [str(x) for x in (previous or {}).get("archive_ids") or []]
+    fact_ids: list[str] = [str(x) for x in (previous or {}).get("fact_ids") or []]
+
+    report: dict[str, Any] = {"batch": batch, "resumed": previous is not None,
+                              "status": STATUS_RUNNING, "total": len(sessions),
+                              "archived_new": 0, "archive_existing": 0, "noise_skipped": 0,
+                              "facts_added": 0, "facts_duplicate": 0, "rejected": 0,
+                              "not_selected": 0, "skipped": 0, "errors": []}
+    done_keys: list[str] = []
+    state = {"stage": STEP_CLEAN, "session": "", "cursor": 0}
+    sources_spec, only_spec = _selection(sources, only_set)
+
+    def snapshot(status: str) -> dict[str, Any]:
+        done = set(done_keys)
+        return {
+            "batch": batch, "status": status, "stage": state["stage"], "source": IMPORT_SOURCE,
+            "created": created, "sources": sources_spec, "only": only_spec,
+            "total": len(sessions), "session_keys": session_keys, "done_keys": list(done_keys),
+            "pending_keys": [k for k in session_keys if k not in done],
+            "cursor": state["cursor"], "last_session": state["session"],
+            **{name: report[name] for name in _COUNTERS},
+            "archive_ids": list(archive_ids), "fact_ids": list(fact_ids),
+            "errors": list(report["errors"]),
+        }
+
+    def checkpoint() -> None:
+        """Persist progress; bookkeeping trouble must not mask the real failure."""
         try:
-            key = _session_key(rs)
-            if only_set is not None and key not in only_set:
-                report["not_selected"] += 1
-                continue
-            if key in skips and (only_set is None or key not in only_set):
-                report["skipped"] += 1
-                continue
-            prepared = _prepare(rs)
-            if prepared is None:
-                report["noise_skipped"] += 1
-                continue
-            body, eid, rule_title, chash = prepared
-            if svc.archive.files.exists(eid) or _existing_entry(svc, rs.source, rs.scope, rs.origin, chash):
-                report["archive_existing"] += 1
-                continue
-            cls = classify_with_cache(llm, svc, cache, chash, rule_title, body)
-            if cls["noise"]:
-                report["noise_skipped"] += 1
-                continue
-            entry = ArchiveEntry(id=eid, source=rs.source, category=cls["category"], title=cls["title"],
-                                 abstract=cls["abstract"], body=body, date=rs.date, origin=rs.origin,
-                                 scope=rs.scope, batch=batch, content_hash=chash)
-            svc.archive.files.write(entry)
-            entries.append(entry)
-            archive_ids.append(eid)
-            report["archived_new"] += 1
-            if CALL_PAUSE:
-                time.sleep(CALL_PAUSE)
-        except Exception as exc:  # one bad session must not stop the batch; a rerun retries it
-            report["errors"].append(f"{rs.scope}: {str(exc)[:160] or exc.__class__.__name__}")
-    if progress:
-        progress({"stage": "indexing", "done": 0, "total": max(1, len(entries))})
-    svc.archive.sync(embed=True)
+            _save_manifest(svc, snapshot(STATUS_RUNNING))
+        except Exception as exc:
+            report["errors"].append(_step_error(batch, "进度清单写入", exc))
 
-    fact_ids: list[str] = []
-    if distill_facts and entries:
-        claims = {_norm(f.claim) for f in svc.store.live_facts()}
-        quotes = {(e.episode, e.quote) for f in svc.store.all_facts() for e in f.evidence}
-        for n, entry in enumerate(entries, 1):
+    try:
+        _save_manifest(svc, snapshot(STATUS_RUNNING))
+    except Exception as exc:  # nothing is archived yet, so failing here is safe
+        raise RuntimeError(_step_error(batch, STEP_MANIFEST, exc)) from exc
+
+    entries: list[ArchiveEntry] = []
+    try:
+        for n, rs in enumerate(sessions, 1):
             if progress:
-                progress({"stage": "distilling", "done": n - 1, "total": len(entries)})
+                progress({"stage": "cleaning", "done": n - 1, "total": len(sessions)})
+            key = _session_key(rs)
+            state["session"] = f"{rs.source}/{rs.scope}"
+            state["stage"] = STEP_CLEAN
             try:
-                kept, rejected = _distill_entry(llm, entry)
-                report["rejected"] += rejected
-                for op in kept:
-                    if _norm(op["claim"]) in claims or (entry.id, op["quote"]) in quotes:
-                        report["facts_duplicate"] += 1
-                        continue
-                    evidence = Evidence(episode=entry.id, quote=op["quote"], origin="imported",
-                                        date=_date.fromisoformat(entry.date))
-                    fact = svc.store.write_fact(svc.store.draft_fact(
-                        type=FactType(op["type"]), subject=op["subject"], claim=op["claim"], evidence=[evidence],
-                        source_agent="session-import", source_session=batch))
-                    svc.retriever.sync_fact(fact)
-                    claims.add(_norm(op["claim"]))
-                    fact_ids.append(fact.id)
-                    report["facts_added"] += 1
-            except Exception as exc:
-                report["errors"].append(f"{entry.id}: {str(exc)[:160] or exc.__class__.__name__}")
-        if fact_ids:
-            svc.retriever.scan_conflicts()
+                if only_set is not None and key not in only_set:
+                    report["not_selected"] += 1
+                    continue
+                if key in skips and (only_set is None or key not in only_set):
+                    report["skipped"] += 1
+                    continue
+                prepared = _prepare(rs)
+                if prepared is None:
+                    report["noise_skipped"] += 1
+                    continue
+                body, eid, rule_title, chash = prepared
+                if svc.archive.files.exists(eid) or _existing_entry(svc, rs.source, rs.scope, rs.origin, chash):
+                    report["archive_existing"] += 1
+                    continue
+                state["stage"] = STEP_CLASSIFY
+                cls = classify_with_cache(llm, svc, cache, chash, rule_title, body)
+                if cls["noise"]:
+                    report["noise_skipped"] += 1
+                    continue
+                entry = ArchiveEntry(id=eid, source=rs.source, category=cls["category"], title=cls["title"],
+                                     abstract=cls["abstract"], body=body, date=rs.date, origin=rs.origin,
+                                     scope=rs.scope, batch=batch, content_hash=chash)
+                state["stage"] = STEP_WRITE
+                svc.archive.files.write(entry)
+                entries.append(entry)
+                archive_ids.append(eid)
+                report["archived_new"] += 1
+                if CALL_PAUSE:
+                    time.sleep(CALL_PAUSE)
+            except Exception as exc:  # abort: stop before the archive drifts further
+                report["errors"].append(_step_error(state["session"], state["stage"], exc))
+                raise
+            finally:
+                done_keys.append(key)
+                state["cursor"] = n
+                checkpoint()
 
-    manifest = {**report, "source": "session-import", "created": datetime.now(timezone.utc).isoformat(),
-                "archive_ids": archive_ids, "fact_ids": fact_ids}
-    folder = svc.settings.home / "imports"
-    folder.mkdir(parents=True, exist_ok=True)
-    _atomic_write(folder / f"{batch}.json", json.dumps(manifest, ensure_ascii=False, indent=2))
-    svc.store.append_event({"op": "import", "id": batch, "source": "session-import"})
+        state["stage"] = STEP_SYNC
+        if progress:
+            progress({"stage": "indexing", "done": 0, "total": max(1, len(entries))})
+        svc.archive.sync(embed=True)
+
+        if distill_facts and entries:
+            claims = {_norm(f.claim) for f in svc.store.live_facts()}
+            quotes = {(e.episode, e.quote) for f in svc.store.all_facts() for e in f.evidence}
+            for n, entry in enumerate(entries, 1):
+                if progress:
+                    progress({"stage": "distilling", "done": n - 1, "total": len(entries)})
+                state["stage"] = STEP_DISTILL
+                state["session"] = f"{entry.source}/{entry.scope}"
+                try:
+                    kept, rejected = _distill_entry(llm, entry)
+                    report["rejected"] += rejected
+                    for op in kept:
+                        if _norm(op["claim"]) in claims or (entry.id, op["quote"]) in quotes:
+                            report["facts_duplicate"] += 1
+                            continue
+                        evidence = Evidence(episode=entry.id, quote=op["quote"], origin="imported",
+                                            date=_date.fromisoformat(entry.date))
+                        fact = svc.store.write_fact(svc.store.draft_fact(
+                            type=FactType(op["type"]), subject=op["subject"], claim=op["claim"],
+                            evidence=[evidence], source_agent="session-import", source_session=batch))
+                        svc.retriever.sync_fact(fact)
+                        claims.add(_norm(op["claim"]))
+                        fact_ids.append(fact.id)
+                        report["facts_added"] += 1
+                except Exception as exc:
+                    # Facts are additive: the archive entry is already committed,
+                    # so one bad distillation is reported, not re-run from scratch.
+                    report["errors"].append(_step_error(state["session"], STEP_DISTILL, exc))
+            if fact_ids:
+                svc.retriever.scan_conflicts()
+
+        state["stage"] = STEP_MANIFEST
+        report["status"] = STATUS_PARTIAL if report["errors"] else STATUS_DONE
+        _save_manifest(svc, snapshot(report["status"]))
+    except Exception as exc:
+        # Keep the batch resumable and say exactly where it stopped.
+        message = _step_error(state["session"] or batch, state["stage"], exc)
+        if message not in report["errors"]:
+            report["errors"].append(message)
+        report["status"] = STATUS_RUNNING
+        try:
+            _save_manifest(svc, snapshot(STATUS_RUNNING))
+        except Exception:  # the manifest on disk already says in_progress
+            pass
+        raise RuntimeError(message) from exc
+
+    svc.store.append_event({"op": "import", "id": batch, "source": IMPORT_SOURCE})
     return report
 
 

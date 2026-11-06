@@ -4,6 +4,8 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from membrain import openviking_import as ov
 from membrain import session_import as si
 from membrain.llm import FakeLLMClient, LLMError
@@ -13,6 +15,14 @@ GOOD_TURNS = [
     ("user", "帮我把配置文件里的超时改成 30 秒，并解释一下为什么默认是 10 秒。"),
     ("assistant", "已改好。默认 10 秒是为了避免长连接占用；改成 30 秒适合慢网络，但要注意挂起请求会更久才报错。"
                   "另外我把改动写进了配置说明文档，方便以后回滚时对照。"),
+]
+SECOND_TURNS = [
+    ("user", "把发布脚本里的版本号改成从 git tag 读取，别再手写了。"),
+    ("assistant", "已改成用 git describe --tags 取版本号，没有 tag 时回退到 dev，并在打包步骤里自动注入构建号。"),
+]
+THIRD_TURNS = [
+    ("user", "给服务加一个健康检查接口，返回队列积压和最近一次同步时间。"),
+    ("assistant", "新增 /healthz，返回队列积压、最近同步时间与版本号；依赖异常时返回 503，让探针能立刻摘流。"),
 ]
 NOISE_TURNS = [("user", "hello"), ("assistant", "No response requested.")]
 
@@ -329,3 +339,129 @@ def test_qoder_human_filter_keeps_non_typed_text_out(tmp_path, monkeypatch):
     (ws / "s1.jsonl").write_text("\n".join(json.dumps(r) for r in records), encoding="utf-8")
     monkeypatch.setattr(si, "HOME", home)
     assert si._collect_qoder() == []
+
+
+def _manifests(svc) -> list[dict]:
+    folder = Path(svc.settings.home) / "imports"
+    return [json.loads(p.read_text(encoding="utf-8")) for p in sorted(folder.glob("b_*.json"))]
+
+
+def _archived(svc) -> list:
+    return list(svc.archive.files.iter_entries())
+
+
+def test_crash_mid_batch_resumes_the_rest_without_duplicates(tmp_path, monkeypatch):
+    """A failure between sessions leaves an in_progress manifest; the next run
+    finishes the remaining sessions under the same batch id and never re-archives
+    the ones that already landed."""
+    svc, agent_home = _setup(tmp_path, monkeypatch)
+    _claude_file(agent_home, "a.jsonl", GOOD_TURNS)
+    _claude_file(agent_home, "b.jsonl", SECOND_TURNS)
+    _claude_file(agent_home, "c.jsonl", THIRD_TURNS)
+    llm = FakeLLMClient([
+        {"noise": False, "category": "code", "title": "调整超时配置", "abstract": "超时改 30 秒"},
+        {"noise": False, "category": "code", "title": "版本号取自 tag", "abstract": "版本号自动读取"},
+        {"noise": False, "category": "code", "title": "健康检查接口", "abstract": "新增 healthz"},
+    ])
+
+    real_write = svc.archive.files.write
+    attempts = {"n": 0}
+
+    def flaky_write(entry):
+        attempts["n"] += 1
+        if attempts["n"] == 2:      # second session blows up mid-batch
+            raise OSError("磁盘写入失败")
+        return real_write(entry)
+
+    monkeypatch.setattr(svc.archive.files, "write", flaky_write)
+
+    with pytest.raises(RuntimeError) as err:
+        si.apply_import(svc, llm)
+    # the error names the session and the step instead of vanishing
+    assert "claude-code/b" in str(err.value) and "归档写入失败" in str(err.value)
+    assert "磁盘写入失败" in str(err.value)
+
+    assert len(_archived(svc)) == 1
+    states = si.pending_batches(svc)
+    assert len(states) == 1
+    state = states[0]
+    assert state["status"] == "in_progress" and state["stage"] == "归档写入"
+    assert len(state["session_keys"]) == 3
+    assert state["cursor"] == 2 and len(state["pending_keys"]) == 1
+    assert len(state["archive_ids"]) == 1
+    # nothing claims this batch finished
+    assert [m["status"] for m in _manifests(svc)] == ["in_progress"]
+
+    monkeypatch.setattr(svc.archive.files, "write", real_write)
+    again = si.apply_import(svc, FakeLLMClient([]))
+
+    assert again["resumed"] is True and again["batch"] == state["batch"]
+    assert again["archived_new"] == 2          # exactly the two left behind
+    assert again["archive_existing"] == 1      # the pre-crash one is not redone
+    assert len(_archived(svc)) == 3
+    assert len({e.origin for e in _archived(svc)}) == 3
+
+    done = si.load_manifest(svc, state["batch"])
+    assert done["status"] == "completed" and len(done["archive_ids"]) == 3
+    assert done["pending_keys"] == [] and done["errors"] == []
+    assert si.pending_batches(svc) == []
+
+
+def test_archive_sync_failure_leaves_a_resumable_batch(tmp_path, monkeypatch):
+    """A sync failure happens after the entry files are on disk. The manifest must
+    stay in_progress so the resumable batch is visible, and the rerun must adopt
+    it, index the files and finish — with no second copy of anything."""
+    svc, agent_home = _setup(tmp_path, monkeypatch)
+    _claude_file(agent_home, "a.jsonl", GOOD_TURNS)
+    _claude_file(agent_home, "b.jsonl", SECOND_TURNS)
+    llm = FakeLLMClient([
+        {"noise": False, "category": "code", "title": "调整超时配置", "abstract": "超时改 30 秒"},
+        {"noise": False, "category": "code", "title": "版本号取自 tag", "abstract": "版本号自动读取"},
+    ])
+
+    real_sync = svc.archive.sync
+
+    def broken_sync(*args, **kwargs):
+        raise RuntimeError("sqlite 索引损坏")
+
+    monkeypatch.setattr(svc.archive, "sync", broken_sync)
+    with pytest.raises(RuntimeError) as err:
+        si.apply_import(svc, llm)
+    assert "archive 同步失败" in str(err.value) and "sqlite 索引损坏" in str(err.value)
+
+    assert len(_archived(svc)) == 2          # files were already written
+    assert [m["status"] for m in _manifests(svc)] == ["in_progress"]
+    state = si.pending_batches(svc)[0]
+    assert state["stage"] == "archive 同步" and state["errors"]
+
+    monkeypatch.setattr(svc.archive, "sync", real_sync)
+    again = si.apply_import(svc, FakeLLMClient([]))
+
+    assert again["resumed"] is True and again["batch"] == state["batch"]
+    assert again["archived_new"] == 0 and again["archive_existing"] == 2
+    assert len(_archived(svc)) == 2
+    done = si.load_manifest(svc, state["batch"])
+    assert done["status"] == "completed" and len(done["archive_ids"]) == 2
+    assert len(svc.archive.browse("claude-code")["items"]) == 2
+
+
+def test_reimport_is_idempotent(tmp_path, monkeypatch):
+    """Same sessions twice: the second pass archives nothing new and adds no copy."""
+    svc, agent_home = _setup(tmp_path, monkeypatch)
+    _claude_file(agent_home, "a.jsonl", GOOD_TURNS)
+    _claude_file(agent_home, "b.jsonl", SECOND_TURNS)
+
+    first = si.apply_import(svc, FakeLLMClient([
+        {"noise": False, "category": "code", "title": "调整超时配置", "abstract": "超时改 30 秒"},
+        {"noise": False, "category": "code", "title": "版本号取自 tag", "abstract": "版本号自动读取"},
+    ]))
+    assert first["archived_new"] == 2
+
+    second = si.apply_import(svc, FakeLLMClient([]))
+    assert second["archived_new"] == 0 and second["archive_existing"] == 2
+    assert second["resumed"] is False            # a finished batch is never reopened
+    assert second["batch"] != first["batch"]
+    assert len(_archived(svc)) == 2
+    assert all(m["status"] == "completed" for m in _manifests(svc))
+    assert len(_manifests(svc)) == 2             # one manifest per run, no leftovers
+
