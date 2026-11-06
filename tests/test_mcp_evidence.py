@@ -104,3 +104,29 @@ def test_two_mcp_services_share_captured_fact_and_source(tmp_path):
     assert entry["source"]["agent"] == "claude" and entry["evidence"][0]["quote"] == "I like tea."
     claude.index.close()
     codex.index.close()
+
+
+def test_write_memory_reports_success_when_only_the_index_fails(tmp_path, monkeypatch):
+    """A landed write must not be reported as a failure.
+
+    Callers retry on failure, and a retry would store a second copy of a memory
+    that was already on disk. The index is derived state and can be rebuilt.
+    """
+    service = MemoryService(make_settings(tmp_path))
+    server = build_server(service)
+    write_tool = server._tool_manager.get_tool("write_memory").fn
+    service.store.append_episodes([
+        Episode(id="user", ts=datetime(2026, 1, 2, tzinfo=timezone.utc), session="s",
+                agent="test", role="user", text="I like tea."),
+    ])
+
+    def boom(_fact):
+        raise RuntimeError("index is down")
+
+    monkeypatch.setattr(service.retriever, "sync_fact", boom)
+    result = write_tool(type="preference", subject="drink", claim="Likes tea",
+                        evidence=[{"episode": "user", "quote": "I like tea."}])
+    assert result["ok"] is True
+    assert "index_warning" in result and "index is down" in result["index_warning"]
+    assert service.store.get_fact(result["id"]).claim == "Likes tea"
+    service.index.close()

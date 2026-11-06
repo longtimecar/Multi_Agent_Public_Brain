@@ -396,11 +396,19 @@ def build_server(service: MemoryService | None = None) -> MCPServer:
                 sensitive=sensitive,
             )
             stored = svc.store.write_fact(fact)
-            svc.retriever.sync_fact(stored)
-            flagged = svc.retriever.scan_conflicts()
         except (KeyError, ValueError, StoreError) as exc:
             return {"ok": False, "error": str(exc)}
-        return {
+        # The fact is durable at this point; only the index is derived state.
+        # A sync failure must not be reported as a failed write — the caller
+        # retries, and the retry stores a second copy of the same memory.
+        index_warning = None
+        flagged: list[Any] = []
+        try:
+            svc.retriever.sync_fact(stored)
+            flagged = svc.retriever.scan_conflicts()
+        except Exception as exc:  # index can be rebuilt from the Markdown
+            index_warning = f"{exc.__class__.__name__}: {exc}"
+        result = {
             "ok": True,
             "id": stored.id,
             "uri": stored.uri,
@@ -410,6 +418,9 @@ def build_server(service: MemoryService | None = None) -> MCPServer:
             "conflicts": len(flagged),
             "note": "single-observation claims are injected as questions, not as facts",
         }
+        if index_warning:
+            result["index_warning"] = index_warning
+        return result
 
     @server.tool(
         description=(
