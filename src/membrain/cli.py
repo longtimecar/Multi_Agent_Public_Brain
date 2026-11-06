@@ -417,6 +417,75 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     return 0
 
 
+AUTOSTART_LINK = "membrain-dashboard.lnk"
+
+
+def _startup_dir() -> Path:
+    return (Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows"
+            / "Start Menu" / "Programs" / "Startup")
+
+
+def cmd_install_autostart(args: argparse.Namespace) -> int:
+    """Start the dashboard at logon, so capture never waits for a manual launch.
+
+    The watcher only sees a conversation while the dashboard process is alive.
+    A night of work was lost because the service simply was not running; this
+    makes that the default rather than something the owner has to remember.
+    """
+    link = _startup_dir() / AUTOSTART_LINK
+    if args.remove:
+        if link.exists():
+            link.unlink()
+            print(f"removed {link}")
+        else:
+            print("autostart entry was not installed")
+        return 0
+    if os.name != "nt":
+        print("Non-Windows: add this line to your desktop autostart or crontab @reboot:")
+        print(f"  {sys.executable} -m membrain.cli dashboard --no-open")
+        return 0
+
+    import base64
+    import subprocess
+
+    from .config import REPO_ROOT
+
+    pythonw = REPO_ROOT / ".venv" / "Scripts" / "pythonw.exe"
+    if not pythonw.exists():
+        pythonw = Path(sys.executable)
+
+    def ps_quote(value: str) -> str:
+        return "'" + value.replace("'", "''") + "'"
+
+    script = "\n".join([
+        "[Console]::OutputEncoding = [Text.Encoding]::UTF8",
+        "$startup = [Environment]::GetFolderPath('Startup')",
+        f"$link = Join-Path $startup {ps_quote(AUTOSTART_LINK)}",
+        "$shell = New-Object -ComObject WScript.Shell",
+        "$shortcut = $shell.CreateShortcut($link)",
+        f"$shortcut.TargetPath = {ps_quote(str(pythonw))}",
+        "$shortcut.Arguments = '-m membrain.cli dashboard --no-open'",
+        f"$shortcut.WorkingDirectory = {ps_quote(str(REPO_ROOT))}",
+        "$shortcut.Description = 'membrain memory dashboard (auto-start)'",
+        "$shortcut.Save()",
+        "Write-Output $link",
+    ])
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    shell = "powershell"
+    result = subprocess.run(
+        [shell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+        capture_output=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    output = (result.stdout or result.stderr).decode("utf-8", "replace").strip()
+    if output:
+        print(output)
+    if result.returncode != 0:
+        print("autostart install failed; the dashboard still runs via `membrain dashboard`.")
+        return result.returncode
+    print("Done: the dashboard now starts with Windows and keeps capture alive.")
+    print("Remove it with: membrain install-autostart --remove")
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     from .config import IN_CHECKOUT, REPO_ROOT
     from .embeddings import EmbeddingError
@@ -593,6 +662,11 @@ def main(argv: list[str] | None = None) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("init", help="create the memory tree and profile").set_defaults(func=cmd_init)
+
+    autostart = sub.add_parser("install-autostart",
+                               help="start the dashboard with Windows so capture keeps running")
+    autostart.add_argument("--remove", action="store_true", help="remove the autostart entry")
+    autostart.set_defaults(func=cmd_install_autostart)
 
     a = sub.add_parser("add", help="add a fact (constraints allowed here only)")
     a.add_argument("claim")
