@@ -322,6 +322,16 @@ class DashboardRuntime:
             "embedding_base_url": self._endpoint(settings.embed_base_url),
             "embedding_api_key_set": bool(settings.embed_api_key),
             "embedding_timeout": settings.embed_timeout,
+            # Rerank is a separate model from the embedding one: embeddings turn
+            # text into vectors for the first pass, a reranker rescores the
+            # shortlist. One endpoint cannot do both.
+            "rerank_configured": bool(settings.rerank_base_url and settings.rerank_model),
+            "rerank_enabled": bool(settings.use_rerank_default),
+            "rerank_provider": settings.rerank_provider,
+            "rerank_model": settings.rerank_model or "—",
+            "rerank_base_url": self._endpoint(settings.rerank_base_url),
+            "rerank_api_key_set": bool(settings.rerank_api_key),
+            "rerank_timeout": settings.rerank_timeout,
             **self._recall_baseline_status(),
         }
 
@@ -532,6 +542,80 @@ class DashboardRuntime:
         self.service.retriever.embedder = embedder
         self.service.archive.embedder = embedder
         return self.model_status()
+
+    def configure_rerank(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Save the rerank endpoint. An empty address turns reranking off.
+
+        Reranking only changes the order of candidates that retrieval already
+        found, so turning it off costs recall nothing — the ranking just falls
+        back to the lexical + semantic blend.
+        """
+        settings = self.service.settings
+        base_url = str(data.get("base_url", "")).strip()
+        model = str(data.get("model", "")).strip()
+        key_input = self._validated_key(data.get("api_key", ""))
+        clear_key = data.get("clear_api_key") is True
+        timeout = self._validated_timeout(data.get("timeout", settings.rerank_timeout),
+                                          settings.rerank_timeout)
+        wanted = data.get("enabled")
+        enabled = True if wanted is None else bool(wanted)
+
+        if not base_url or not model:
+            base_url, model = "", ""
+            api_key = None
+            enabled = False
+        else:
+            base_url = self._validated_url(base_url, "重排接口地址")
+            model = self._validated_model(model, "重排模型名称")
+            api_key = None if clear_key else (key_input or settings.rerank_api_key)
+
+        env_path = settings.env_file or DEFAULT_ENV_FILE
+        self._write_env(env_path, {
+            "MEMBRAIN_RERANK_PROVIDER": "openai" if base_url else "heuristic",
+            "MEMBRAIN_RERANK_BASE_URL": base_url,
+            "MEMBRAIN_RERANK_MODEL": model,
+            "MEMBRAIN_RERANK_TIMEOUT": str(timeout),
+            "MEMBRAIN_RERANK_API_KEY": api_key or "",
+            "MEMBRAIN_USE_RERANK": "1" if enabled else "0",
+        })
+        updated = replace(
+            settings,
+            rerank_provider="openai" if base_url else "heuristic",
+            rerank_base_url=base_url or None,
+            rerank_model=model or None,
+            rerank_api_key=api_key,
+            rerank_timeout=timeout,
+            use_rerank_default=enabled,
+            env_file=env_path,
+        )
+        self.service.settings = updated
+        # The retriever reads thresholds and rerank settings off its own copy.
+        self.service.retriever.settings = updated
+        return self.model_status()
+
+    def test_rerank(self) -> dict[str, Any]:
+        """Call the rerank endpoint once with a known-good pair of documents."""
+        settings = self.service.settings
+        if not (settings.rerank_base_url and settings.rerank_model):
+            raise ValueError("重排尚未配置。填写接口地址和模型名称后即可启用。")
+        from .rerank import _openai_compatible_scores
+
+        documents = ["喜欢喝咖啡", "用 PySide6 写了一个番茄钟", "要求回复简短、结论先行"]
+        started = time.monotonic()
+        scores = _openai_compatible_scores(
+            "我平时喝什么", documents,
+            base_url=settings.rerank_base_url,
+            api_key=settings.rerank_api_key,
+            model=settings.rerank_model,
+            timeout=settings.rerank_timeout,
+        )
+        best = max(range(len(scores)), key=lambda i: scores[i]) if scores else 0
+        return {
+            "elapsed_ms": int((time.monotonic() - started) * 1000),
+            "scores": [round(float(s), 4) for s in scores],
+            "best": documents[best] if documents else "",
+            "documents": documents,
+        }
 
     def test_embedding(self) -> dict[str, Any]:
         """Call the embedding endpoint once and report the vector size."""
@@ -1679,6 +1763,10 @@ def make_handler(runtime: DashboardRuntime):
                     self._json(200, runtime.test_embedding())
                 elif path == "/api/model/embedding/config":
                     self._json(200, runtime.configure_embedding(data))
+                elif path == "/api/model/rerank/config":
+                    self._json(200, runtime.configure_rerank(data))
+                elif path == "/api/model/rerank/test":
+                    self._json(200, runtime.test_rerank())
                 elif path == "/api/import/start":
                     job, started = runtime.start_import()
                     self._json(202 if started else 409, job)

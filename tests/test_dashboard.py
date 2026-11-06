@@ -1264,3 +1264,83 @@ def test_health_endpoint_honours_the_kind_filter_over_get(dashboard):
     status, _, raw = request("/api/health?kinds=duplicate")
     assert status == 200
     assert json.loads(raw)["findings"] == [], "只要重复时不该顺带返回指令误存"
+
+
+def test_rerank_config_is_saved_and_applied_without_a_restart(tmp_path):
+    """重排模型要能在界面里自己填，保存即生效。
+
+    它是和 Embedding 不同的另一个模型：Embedding 把文本变成向量做初筛，
+    重排再给候选打分。两者地址和模型名都不一样，不能共用一个输入框。
+    """
+    from dataclasses import replace
+
+    from test_core import make_settings
+
+    service = MemoryService(make_settings(tmp_path))
+    env_file = tmp_path / "rerank.env"
+    service.settings = replace(service.settings, env_file=env_file)
+    runtime = DashboardRuntime(service, auto_extract_chat=False)
+    try:
+        saved = runtime.configure_rerank({
+            "base_url": "https://api.siliconflow.cn/v1",
+            "model": "BAAI/bge-reranker-v2-m3",
+            "api_key": "sk-test-key",
+            "timeout": 15,
+        })
+        assert saved["rerank_configured"] is True
+        assert saved["rerank_enabled"] is True
+        assert saved["rerank_provider"] == "openai"
+        assert saved["rerank_api_key_set"] is True
+
+        written = env_file.read_text(encoding="utf-8")
+        assert 'MEMBRAIN_USE_RERANK="1"' in written
+        assert '"BAAI/bge-reranker-v2-m3"' in written
+        # 检索器必须换成同一份设置，否则只有一半代码用新模型
+        assert service.retriever.settings.rerank_model == "BAAI/bge-reranker-v2-m3"
+
+        off = runtime.configure_rerank({"base_url": "", "model": ""})
+        assert off["rerank_configured"] is False
+        assert off["rerank_enabled"] is False
+        assert off["rerank_provider"] == "heuristic"
+    finally:
+        service.index.close()
+
+
+def test_rerank_config_is_saved_and_applied_without_a_restart(tmp_path):
+    """重排模型要能在界面里自己填，保存即生效。
+
+    它是和 Embedding 不同的另一个模型：Embedding 把文本变成向量做初筛，
+    重排再给候选打分。两者地址和模型名都不一样，不能共用一个输入框。
+    """
+    from dataclasses import replace
+
+    from test_core import make_settings
+
+    service = MemoryService(make_settings(tmp_path))
+    env_file = tmp_path / "rerank.env"
+    service.settings = replace(service.settings, env_file=env_file)
+    runtime = DashboardRuntime(service, auto_extract_chat=False)
+    try:
+        saved = runtime.configure_rerank({
+            "base_url": "https://api.siliconflow.cn/v1",
+            "model": "BAAI/bge-reranker-v2-m3",
+            "api_key": "sk-test-key",
+            "timeout": 15,
+        })
+        assert saved["rerank_configured"] is True
+        assert saved["rerank_enabled"] is True
+        assert saved["rerank_provider"] == "openai"
+        assert saved["rerank_api_key_set"] is True
+
+        written = env_file.read_text(encoding="utf-8")
+        assert 'MEMBRAIN_USE_RERANK="1"' in written
+        assert '"BAAI/bge-reranker-v2-m3"' in written
+        # 检索器必须换成同一份设置，否则只有一半代码用新模型
+        assert service.retriever.settings.rerank_model == "BAAI/bge-reranker-v2-m3"
+
+        off = runtime.configure_rerank({"base_url": "", "model": ""})
+        assert off["rerank_configured"] is False
+        assert off["rerank_enabled"] is False
+        assert off["rerank_provider"] == "heuristic"
+    finally:
+        service.index.close()

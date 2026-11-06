@@ -776,6 +776,9 @@ class Extractor:
             for current in batch:
                 try:
                     self.extract_session(current, episodes, state, report)
-                except (LLMError, StoreError, ValueError) as exc:
+                except (LLMError, StoreError, ValueError, MemoryError) as exc:
+                    # A memory spike must cost one conversation, not the pass:
+                    # it used to escape here and mark the whole job failed, so
+                    # every scheduled run died on the same allocation.
                     report.errors.append(f"{current}: {exc}")
         return report

@@ -192,6 +192,30 @@ function renderModel(data) {
     $('#model-config-timeout').value = data.timeout || 30;
   }
   renderEmbedding(data);
+  renderRerank(data);
+}
+
+function renderRerank(data) {
+  const configured = Boolean(data.rerank_configured);
+  const enabled = Boolean(data.rerank_enabled);
+  $('#rerank-dot').classList.remove('is-online');
+  $('#rerank-status-badge').className = `status-badge ${enabled ? 'status-contested' : 'status-retracted'}`;
+  $('#rerank-status-badge').textContent = enabled ? '待测试' : (configured ? '已配置未启用' : '未启用');
+  $('#rerank-name').textContent = configured ? (data.rerank_model || '未命名模型') : '未配置重排模型';
+  $('#rerank-format').textContent = data.rerank_base_url || '—';
+  $('#rerank-model').textContent = data.rerank_model || '—';
+  $('#rerank-key-status').textContent = data.rerank_api_key_set ? '已设置' : '未设置';
+  $('#rerank-timeout').textContent = data.rerank_timeout ? `${data.rerank_timeout}s` : '—';
+  $('#rerank-mode').textContent = enabled ? '重排 + 混合检索' : '仅混合检索';
+  $('#rerank-test-button').disabled = !configured;
+  $('#rerank-result').textContent = configured
+    ? '已读取配置，请测试连接。'
+    : '重排只改变候选顺序，不配置也能正常检索。';
+  if (!$('#rerank-config').open) {
+    $('#rerank-config-base-url').value = data.rerank_base_url === '—' ? '' : data.rerank_base_url;
+    $('#rerank-config-model').value = data.rerank_model === '—' ? '' : data.rerank_model;
+    $('#rerank-config-timeout').value = data.rerank_timeout || 20;
+  }
 }
 
 function renderEmbedding(data) {
@@ -740,6 +764,58 @@ async function saveEmbeddingConfig(event) {
   } finally {
     button.disabled = false;
     button.textContent = '保存 Embedding 配置';
+  }
+}
+
+async function testRerank() {
+  const button = $('#rerank-test-button');
+  button.disabled = true;
+  $('#rerank-result').textContent = '正在请求重排接口…';
+  $('#rerank-status-badge').className = 'status-badge status-contested';
+  $('#rerank-status-badge').textContent = '测试中';
+  try {
+    const result = await fetchJson('/api/model/rerank/test', { method: 'POST', body: '{}' });
+    $('#rerank-dot').classList.add('is-online');
+    $('#rerank-status-badge').className = 'status-badge status-active';
+    $('#rerank-status-badge').textContent = '连接正常';
+    const ranking = (result.documents || [])
+      .map((doc, index) => `${result.scores[index]} ${doc}`)
+      .join(' · ');
+    $('#rerank-result').textContent = `连接正常 · ${result.elapsed_ms} ms · 排序：${ranking}`;
+    notify('重排连接正常');
+  } catch (error) {
+    $('#rerank-dot').classList.remove('is-online');
+    $('#rerank-status-badge').className = 'status-badge status-retracted';
+    $('#rerank-status-badge').textContent = '连接失败';
+    $('#rerank-result').textContent = error.message;
+    notify(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function saveRerankConfig(event) {
+  event.preventDefault();
+  const form = $('#rerank-config-form');
+  const button = form.querySelector('button[type="submit"]');
+  const data = Object.fromEntries(new FormData(form).entries());
+  data.clear_api_key = $('#rerank-config-clear-key').checked;
+  data.enabled = $('#rerank-config-enabled').checked;
+  button.disabled = true;
+  button.textContent = '正在保存…';
+  try {
+    const result = await fetchJson('/api/model/rerank/config', { method: 'POST', body: JSON.stringify(data) });
+    $('#rerank-config-key').value = '';
+    $('#rerank-config-clear-key').checked = false;
+    renderRerank(result);
+    $('#rerank-result').textContent = '配置已保存。请测试连接。';
+    notify('重排配置已保存');
+  } catch (error) {
+    $('#rerank-result').textContent = error.message;
+    notify(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = '保存重排配置';
   }
 }
 
@@ -1611,6 +1687,8 @@ function bind() {
   });
   $('#embedding-test-button').addEventListener('click', testEmbedding);
   $('#embedding-config-form').addEventListener('submit', saveEmbeddingConfig);
+  $('#rerank-test-button').addEventListener('click', testRerank);
+  $('#rerank-config-form').addEventListener('submit', saveRerankConfig);
   $('#embedding-config-clear-key').addEventListener('change', (event) => {
     $('#embedding-config-key').disabled = event.target.checked;
   });

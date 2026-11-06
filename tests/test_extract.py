@@ -665,3 +665,32 @@ def test_command_detection_matches_real_phrasing(text, expected):
     from membrain.extract import _is_agent_command
 
     assert _is_agent_command(text) is expected
+
+
+def test_a_memory_spike_costs_one_session_not_the_whole_pass(extractor, monkeypatch):
+    """一次分配失败不该让整轮提炼判失败。
+
+    真机上出现过：内存吃紧时 `Unable to allocate 4.61 MiB` 从会话处理里逃出去，
+    整个提炼任务被标成 error，于是每次定时任务都撞在同一处，积压一直不动。
+    """
+    settings, store, index, _ = extractor
+    from membrain.extract import Extractor
+
+    store.append_episodes([episode("e1", "user", "先记录一下进度", session="s1"),
+                           episode("a1", "assistant", "好", session="s1"),
+                           episode("e2", "user", "第二个会话也要继续", session="s2"),
+                           episode("a2", "assistant", "收到", session="s2")])
+    ext = Extractor(store, Retriever(store, index, FakeEmbedder(), settings), FakeLLMClient([]))
+    calls = {"n": 0}
+    real = ext.extract_session
+
+    def flaky(session, episodes, state, report):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise MemoryError("Unable to allocate 4.61 MiB")
+        return real(session, episodes, state, report)
+
+    monkeypatch.setattr(ext, "extract_session", flaky)
+    report = ext.run()
+    assert report.errors and "4.61 MiB" in report.errors[0]
+    assert calls["n"] >= 2, "第一个会话失败后应继续处理下一个"

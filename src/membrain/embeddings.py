@@ -69,7 +69,11 @@ class Embedder:
             for text, vec in zip(pending, self._post(pending)):
                 arr = np.asarray(vec, dtype=np.float32)
                 self._cache[text] = arr / (np.linalg.norm(arr) + 1e-9)
-        return np.vstack([self._cache[t] for t in texts]).astype(np.float32)
+        # No `.astype(float32)` copy: every cached vector is already float32, so
+        # vstack produces float32 and the cast only doubled the allocation —
+        # 4.6 MB per call on a 295-claim store, which is enough to fail on a
+        # machine that is nearly out of commit.
+        return np.vstack([self._cache[t] for t in texts])
 
     def embed_queries(self, texts: Sequence[str]) -> np.ndarray | None:
         """Embed retrieval queries with their instruction; facts stay unprefixed.
