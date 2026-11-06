@@ -393,17 +393,22 @@ def cmd_extract(args: argparse.Namespace) -> int:
 
 
 def cmd_dashboard(args: argparse.Namespace) -> int:
-    from .dashboard import create_server, open_dashboard, running_dashboard
+    from .dashboard import create_server, open_dashboard, running_dashboard, stop_dashboard
 
     # Windows rejects 127.0.0.0 as a bind address even though it is in the
     # loopback range. Keep the requested port and normalize to the usable host.
     host = "127.0.0.1" if args.host == "127.0.0.0" else args.host
-    # One dashboard at a time: a second launch (for example the desktop
-    # shortcut clicked twice) only opens the browser on the running one.
+    # One dashboard at a time. A second launch used to only open a browser tab,
+    # so "close it and start it again" silently kept the old code running:
+    # \u70b9\u4e00\u6b21\u5f00\u673a\u542f\u52a8\u5feb\u6377\u65b9\u5f0f\u4e5f\u5c31\u6c38\u8fdc\u8dd1\u4e0d\u5230\u65b0\u4ee3\u7801\u3002--restart makes the launcher really replace it.
     if running_dashboard(host, args.port):
-        if not args.no_open:
-            open_dashboard(host, args.port)
-        return 0
+        if not args.restart:
+            if not args.no_open:
+                open_dashboard(host, args.port)
+            return 0
+        if not stop_dashboard(args.port):
+            print("error: could not stop the running dashboard; close it by hand", file=sys.stderr)
+            return 1
     try:
         server = create_server(host, args.port)
     except (OSError, ValueError) as exc:
@@ -825,6 +830,8 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--host", default="127.0.0.0")
     d.add_argument("--port", type=int, default=1966)
     d.add_argument("--no-open", action="store_true", help="do not open the browser automatically")
+    d.add_argument("--restart", action="store_true",
+                   help="stop the dashboard already on this port and start the current code")
     d.set_defaults(func=cmd_dashboard)
 
     args = p.parse_args(argv)

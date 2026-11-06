@@ -25,6 +25,7 @@ from typing import Iterable, Iterator
 import yaml
 from pydantic import ValidationError
 
+from .agents import agent_key as _agent_key
 from .confidence import compute_confidence
 from .locking import file_lock
 from .models import ID_RE, Episode, Evidence, Fact, FactType, Status
@@ -318,7 +319,14 @@ class Store:
                     existing = sum(1 for line in fh if line.strip())
             with open(path, "a", encoding="utf-8", newline="\n") as fh:
                 for i, ep in enumerate(batch):
-                    stamped = ep.model_copy(update={"id": ep.id or new_episode_id(ep.ts, existing + i)})
+                    stamped = ep.model_copy(update={
+                        "id": ep.id or new_episode_id(ep.ts, existing + i),
+                        # One agent, one spelling. Hooks wrote "WorkBuddy" while
+                        # the watcher wrote "workbuddy", so every per-agent count
+                        # was split in two; the display layer maps the key back
+                        # to a readable name.
+                        "agent": _agent_key(ep.agent),
+                    })
                     fh.write(stamped.model_dump_json() + "\n")
                     written.append(stamped)
         return written

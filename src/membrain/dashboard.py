@@ -21,6 +21,7 @@ from urllib.parse import parse_qs, unquote, urlparse, urlsplit
 from pydantic import ValidationError
 
 from . import agents, archive, health, openviking_import, session_import
+from . import agents as agent_names
 from .config import DEFAULT_ENV_FILE, IN_CHECKOUT, REPO_ROOT
 from .embeddings import Embedder, EmbeddingError
 from .models import Episode, Evidence, FactType, Status
@@ -1245,8 +1246,12 @@ def make_handler(runtime: DashboardRuntime):
             episodes = list(service.store.iter_episodes())
             agents: dict[str, int] = {}
             for fact in facts:
-                name = fact.source.agent or "unknown"
-                agents[name] = agents.get(name, 0) + 1
+                # Group by canonical key: one agent reaches the store as
+                # "WorkBuddy" and "workbuddy", and counting both split every
+                # per-source number in half. The module name is shadowed by the
+                # `agents` counter, so it is imported under a local alias.
+                label = agent_names.display_name(fact.source.agent)
+                agents[label] = agents.get(label, 0) + 1
             recent = sorted(facts, key=lambda fact: (fact.created_at, fact.id), reverse=True)[:8]
             return {
                 "stats": {
@@ -1309,8 +1314,14 @@ def make_handler(runtime: DashboardRuntime):
             episodes = [episode for episode in runtime.service.store.iter_episodes()
                         if not agents.is_disabled(episode.agent, runtime.service.disabled_agents())]
             episodes.sort(key=lambda episode: (episode.ts, episode.id), reverse=True)
-            return {"items": [episode.model_dump(mode="json") for episode in episodes[:limit]],
-                    "count": len(episodes)}
+            items = []
+            for episode in episodes[:limit]:
+                item = episode.model_dump(mode="json")
+                # Show one row per agent: the stored spelling varies by writer
+                # ("WorkBuddy" from hooks, "workbuddy" from the watcher).
+                item["agent"] = agent_names.display_name(episode.agent)
+                items.append(item)
+            return {"items": items, "count": len(episodes)}
 
         def _archive(self, query: dict[str, list[str]]) -> dict[str, Any]:
             lib = runtime.service.archive
@@ -1720,3 +1731,59 @@ def open_dashboard(host: str, port: int) -> None:
     import webbrowser
 
     webbrowser.open(f"http://{host}:{port}/")
+
+
+def listening_pid(port: int) -> int | None:
+    """The PID listening on `port` (None when nothing does).
+
+    Parsed from netstat rather than psutil: the dashboard must not depend on an
+    extra package to restart itself, and netstat ships with Windows.
+    """
+    if os.name != "nt":
+        return None
+    try:
+        out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True,
+                             timeout=8, creationflags=0x08000000)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    text = out.stdout.decode("utf-8", errors="replace") if isinstance(out.stdout, bytes) else (out.stdout or "")
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) < 5 or not parts[0].upper().startswith("TCP"):
+            continue
+        local, state, pid = parts[1], parts[-2].upper(), parts[-1]
+        if state != "LISTENING" or not local.endswith(f":{port}") or not pid.isdigit():
+            continue
+        return int(pid)
+    return None
+
+
+def stop_dashboard(port: int, timeout: float = 10.0) -> bool:
+    """Stop the dashboard listening on `port`, so a relaunch really reloads code.
+
+    Only a python process is killed: an unrelated program that happens to hold
+    the port must not be terminated by a launcher click.
+    """
+    pid = listening_pid(port)
+    if pid is None:
+        return True
+    try:
+        listed = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                                capture_output=True, timeout=8, creationflags=0x08000000)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    raw = listed.stdout or b""
+    name = raw.decode("utf-8", errors="replace").split(",")[0].strip('"').lower()
+    if not name.startswith("python"):
+        return False
+    try:
+        subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True,
+                       timeout=10, creationflags=0x08000000)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if listening_pid(port) is None:
+            return True
+        time.sleep(0.2)
+    return listening_pid(port) is None

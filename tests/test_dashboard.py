@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
+import time
 from datetime import date, datetime, timedelta, timezone
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -1114,3 +1116,51 @@ def test_partial_answer_reports_what_actually_happened():
 def test_partial_answer_is_honest_when_nothing_worked():
     text = DashboardRuntime._partial_answer([{"action": "health_scan", "ok": True, "result": {}}])
     assert "没能完成" in text
+
+
+@pytest.mark.skipif(os.name != "nt", reason="netstat/taskkill 只在 Windows 上验证")
+def test_the_launcher_can_actually_replace_a_running_dashboard():
+    """点启动脚本要真的换掉旧进程。
+
+    之前重复启动只是打开一个浏览器页签，于是"关掉再开"永远跑的还是旧代码：
+    界面看起来正常，改动一条都没生效。这条测试起一个真进程、按端口找到它、
+    再把端口收回来。
+    """
+    import socket
+    import subprocess
+    import sys
+
+    from membrain.dashboard import listening_pid, stop_dashboard
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+
+    code = (
+        "import http.server, socketserver\n"
+        "class H(http.server.BaseHTTPRequestHandler):\n"
+        "    def do_GET(self):\n"
+        "        self.send_response(200); self.send_header('Server','MembrainDashboard')\n"
+        "        self.end_headers(); self.wfile.write(b'{}')\n"
+        "    def log_message(self, *a): pass\n"
+        "socketserver.TCPServer.allow_reuse_address = True\n"
+        f"with socketserver.TCPServer(('127.0.0.1', {port}), H) as s: s.serve_forever()\n"
+    )
+    child = subprocess.Popen([sys.executable, "-c", code])
+    try:
+        for _ in range(50):
+            if listening_pid(port):
+                break
+            time.sleep(0.1)
+        # 不比对 PID：解释器可能再起一层子进程，端口归属才是事实。
+        assert listening_pid(port) is not None
+        assert stop_dashboard(port) is True
+        assert listening_pid(port) is None
+        for _ in range(50):
+            if child.poll() is not None:
+                break
+            time.sleep(0.1)
+        assert child.poll() is not None, "旧进程必须真的退出，而不只是端口改了归属"
+    finally:
+        if child.poll() is None:
+            child.kill()

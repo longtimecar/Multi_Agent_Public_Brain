@@ -561,3 +561,17 @@ def scan(memory_home: Path, home: Path | None = None, appdata: Path | None = Non
                       "status": "manual", "capture": "relay", "protected": False, "can_connect": False,
                       "prompt": build_prompt(generic, memory_home)})
     return items
+
+
+def display_name(name: str) -> str:
+    """Human label for whatever spelling an agent was stored under.
+
+    The overview counted "WorkBuddy" and "workbuddy" as two sources, so one
+    agent showed up twice with half the numbers each. Grouping by the canonical
+    key and printing the spec name fixes the display without rewriting evidence.
+    """
+    key = agent_key(name)
+    for spec in SPECS:
+        if spec.key == key:
+            return spec.name
+    return (name or "unknown").strip() or "unknown"

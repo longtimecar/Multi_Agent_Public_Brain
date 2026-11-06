@@ -485,3 +485,23 @@ def test_embeddings_url_accepts_both_base_url_forms():
         "https://api.example.com/v1/embeddings/",
     ):
         assert embeddings_url(base) == expected
+
+
+def test_one_agent_is_stored_under_one_spelling(world):
+    """钩子写 "WorkBuddy"、采集写 "workbuddy"，同一个 Agent 被算成两个来源。
+
+    存储只认一个规范名，展示层再映射回可读名称；否则每个来源的统计都被劈成两半。
+    """
+    from datetime import datetime, timezone
+
+    from membrain.models import Episode
+
+    _, store, _, _ = world
+    when = datetime(2026, 1, 2, 9, 0, tzinfo=timezone.utc)
+    store.append_episodes([
+        Episode(id="", ts=when, session="s1", agent="WorkBuddy", role="user", text="一"),
+        Episode(id="", ts=when, session="s2", agent="workbuddy", role="user", text="二"),
+        Episode(id="", ts=when, session="s3", agent="Claude Code", role="user", text="三"),
+    ])
+    agents = sorted(episode.agent for episode in store.iter_episodes())
+    assert agents == ["claude-code", "workbuddy", "workbuddy"]
