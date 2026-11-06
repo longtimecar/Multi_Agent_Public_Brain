@@ -30,6 +30,10 @@ DEFAULT_EXTRACT_SESSIONS = 12
 # How many passes a session may be retried while its operations keep getting
 # rejected by our own rules, before it is marked handled and left alone.
 MAX_RETRIES = 3
+# How many rejected quotes one batch may spend a model call on repairing. The
+# repair is a second chance, not a retry loop: a batch whose quotes are mostly
+# invented should cost a bounded number of extra calls and then fail loudly.
+MAX_QUOTE_REPAIRS = 3
 
 
 class JSONClient(Protocol):
@@ -51,6 +55,11 @@ class ExtractionReport:
     # supersede). Counted, not fatal: they are the model's fault, not the
     # pipeline's, and dropping one must not freeze the conversation behind it.
     rejected: int = 0
+    # Operations whose rejected quote was rescued by one repair call and then
+    # passed the same verbatim check. Kept apart from rejected: a repair that
+    # works is not a rejection, and a rising number shows the model's quoting
+    # drifting even while memories still land.
+    repaired: int = 0
     # Sessions left for the next pass, and whether this pass was skipped
     # because another extractor already holds the lock. Both make a stalled
     # pipeline visible instead of looking like an empty day.
@@ -223,6 +232,17 @@ def locate_quote(text: str, quote: str) -> str | None:
     return max(matches, key=len)
 
 
+class QuoteMismatch(StoreError):
+    """The quote is not in the user's turn as written.
+
+    A subclass, so every existing caller that treats it as a StoreError keeps
+    working, while the extractor can tell this one case — and only this one —
+    apart and spend a single repair call on it. A turn that is not the user's
+    own does NOT qualify: repairing a quote against assistant text would let
+    the model's words become evidence.
+    """
+
+
 def _quote_episode(episodes: dict[str, Episode], episode_id: str,
                    quote: str) -> tuple[Episode, str]:
     """Resolve the evidence turn and the user's own words it is quoting.
@@ -236,7 +256,7 @@ def _quote_episode(episodes: dict[str, Episode], episode_id: str,
     text = clean_turn(episode.text)
     found = locate_quote(text, quote) if text else None
     if found is None:
-        raise StoreError("evidence quote must be a verbatim substring of the user turn")
+        raise QuoteMismatch("evidence quote must be a verbatim substring of the user turn")
     return episode, found
 
 
@@ -245,11 +265,24 @@ def _evidence(episode: Episode, quote: str) -> Evidence:
                     date=episode.local_date, origin="stated")
 
 
+# Told apart from the main extraction prompt on purpose: it is the only way a
+# test (or a log reader) can count how many calls the repair path spent.
+REPAIR_SYSTEM = (
+    "Role: evidence quote repair. One memory operation was rejected because its quote is not a "
+    "verbatim substring of the user's turn. Pick a span the claim really rests on and copy it "
+    "character for character out of the turn: one contiguous run, no paraphrase, no translation, "
+    "no joining distant parts with '...' or '…'. If the turn does not support the claim at all, "
+    "return an empty quote. Return only {\"quote\": \"...\"}."
+)
+
+
 class Extractor:
     def __init__(self, store: Store, retriever: Retriever, llm: JSONClient) -> None:
         self.store = store
         self.retriever = retriever
         self.llm = llm
+        # Per-batch budget, reset at the top of every batch in extract_session.
+        self._repairs_left = MAX_QUOTE_REPAIRS
 
     def _context(self, users: list[Episode], all_episodes: list[Episode]) -> str:
         first = min((all_episodes.index(ep) for ep in users), default=0)
@@ -411,6 +444,59 @@ class Extractor:
             return next(fact for fact in candidates if fact.id == selected)
         return None
 
+    def _resolve_quote(self, op: dict[str, Any], episodes: dict[str, Episode],
+                       report: ExtractionReport) -> tuple[Episode, str, str]:
+        """Return the evidence turn, the span as stored, and the quote to use.
+
+        A quote that does not match gets exactly one repair attempt, and the
+        repaired candidate goes through the very same check. One attempt only:
+        looping a model until it produces a substring would be an expensive way
+        to get a paraphrase accepted, and a fabricated claim still has nothing
+        in the turn for the fragments to match.
+        """
+        episode_id = str(op.get("episode", ""))
+        quote = str(op.get("quote", "")).strip()
+        try:
+            episode, matched = _quote_episode(episodes, episode_id, quote)
+            return episode, matched, quote
+        except QuoteMismatch:
+            repaired = self._repair_quote(op, episodes.get(episode_id))
+            if repaired is None:
+                raise
+        # Re-validated through locate_quote: only a candidate that really is a
+        # slice of the user's turn gets this far.
+        episode, matched = _quote_episode(episodes, episode_id, repaired)
+        op["quote"] = repaired
+        report.repaired += 1
+        return episode, matched, repaired
+
+    def _repair_quote(self, op: dict[str, Any], episode: Episode | None) -> str | None:
+        """Ask once for a verbatim span from the same turn. None means give up.
+
+        Bounded per batch and never raises: a model outage here must not cost
+        the batch its other memories, and a repair that fails is just the
+        rejection the operation was going to get anyway.
+        """
+        if self._repairs_left <= 0 or episode is None:
+            return None
+        text = clean_turn(episode.text)
+        if not text:
+            return None
+        self._repairs_left -= 1
+        payload = json.dumps({
+            "claim": str(op.get("claim") or "").strip(),
+            "rejected_quote": str(op.get("quote") or "").strip(),
+            "turn": text,
+        }, ensure_ascii=False)
+        try:
+            result = self.llm.complete_json(REPAIR_SYSTEM, payload)
+        except LLMError:
+            return None
+        candidate = result.get("quote") if isinstance(result, dict) else None
+        if not isinstance(candidate, str) or not candidate.strip():
+            return None
+        return candidate.strip()
+
     def _apply(self, op: dict[str, Any], episodes: dict[str, Episode], report: ExtractionReport) -> None:
         if not isinstance(op.get("op"), str):
             raise StoreError("extraction operation is missing its op field")
@@ -418,9 +504,7 @@ class Extractor:
         if name == "none":
             report.skipped += 1
             return
-        episode_id = str(op.get("episode", ""))
-        quote = str(op.get("quote", "")).strip()
-        episode, matched = _quote_episode(episodes, episode_id, quote)
+        episode, matched, quote = self._resolve_quote(op, episodes, report)
         evidence = _evidence(episode, matched)
 
         # Gap 8: type merge policy soft gate (ledger still owns truth; no hard delete).
@@ -562,6 +646,9 @@ class Extractor:
             if not isinstance(operations, list):
                 raise LLMError("extraction response must contain operations")
             episode_map = {ep.id: ep for ep in batch}
+            # Repair budget is per batch: one unlucky batch must not spend the
+            # rest of the session's second chances.
+            self._repairs_left = MAX_QUOTE_REPAIRS
             # Isolate per operation. One rejected item used to raise straight
             # out of the loop, discarding every valid operation that came after
             # it in the same batch — the model's single sloppy quote cost the

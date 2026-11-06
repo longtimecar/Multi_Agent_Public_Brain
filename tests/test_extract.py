@@ -439,3 +439,85 @@ def test_duplicate_pool_is_bounded(extractor):
     live = store.live_facts()
     pool = ext._duplicate_candidates("dietary", "Does not eat spicy food", live)
     assert len(pool) <= 40
+
+
+def _repair_calls(llm) -> list[tuple[str, str]]:
+    """The repair path is identified by its own system prompt."""
+    return [call for call in llm.calls if "evidence quote repair" in call[0]]
+
+
+def test_paraphrased_quote_is_repaired_once_and_the_fact_is_written(extractor):
+    """A rejected quote gets one repair call, not a lost memory.
+
+    The model paraphrased its evidence; the turn was real and supported the
+    claim. Rejecting outright dropped a true memory, so the operation is retried
+    once with the turn in hand — and the repaired quote still has to be verbatim.
+    """
+    _, store, _, retriever = extractor
+    store.append_episodes([episode("e1", "user", "我更喜欢简短的回复，请尽量一句话说完。")])
+    llm = FakeLLMClient([
+        {"operations": [{"op": "add", "type": "preference", "subject": "style",
+                         "claim": "更喜欢简短的回复", "episode": "e1",
+                         "quote": "喜欢简洁的回答", "durable": True}]},
+        {"quote": "更喜欢简短的回复"},
+    ])
+    report = Extractor(store, retriever, llm).run("s1")
+
+    assert report.repaired == 1, report.errors
+    assert report.rejected == 0, report.errors
+    assert report.facts_added == 1, report.errors
+    assert len(_repair_calls(llm)) == 1
+    fact = store.live_facts()[0]
+    assert fact.claim == "更喜欢简短的回复"
+    assert fact.evidence[0].quote in "我更喜欢简短的回复，请尽量一句话说完。"
+    # The repair prompt carries the turn verbatim and the rejected wording.
+    payload = json.loads(_repair_calls(llm)[0][1])
+    assert payload["turn"] == "我更喜欢简短的回复，请尽量一句话说完。"
+    assert payload["claim"] == "更喜欢简短的回复"
+
+
+def test_repair_that_still_invents_a_quote_is_rejected(extractor):
+    """The repair is a second chance, not a lower bar.
+
+    If the second answer is invented too, nothing is written: evidence stays
+    text the user typed, and 'close enough' is never accepted.
+    """
+    _, store, _, retriever = extractor
+    store.append_episodes([episode("e1", "user", "我更喜欢简短的回复，请尽量一句话说完。")])
+    llm = FakeLLMClient([
+        {"operations": [{"op": "add", "type": "preference", "subject": "style",
+                         "claim": "更喜欢简短的回复", "episode": "e1",
+                         "quote": "喜欢简洁的回答", "durable": True}]},
+        {"quote": "我从来没说过这句话"},
+    ])
+    report = Extractor(store, retriever, llm).run("s1")
+
+    assert len(_repair_calls(llm)) == 1, "the bad quote must actually be offered one repair"
+    assert report.rejected >= 1
+    assert report.repaired == 0
+    assert report.facts_added == 0
+    assert store.live_facts() == []
+
+
+def test_quote_repair_calls_are_capped_per_batch(extractor):
+    """Repair is a bounded second chance, not a retry loop.
+
+    Four unusable quotes in one batch may not buy four model calls: the cap
+    keeps a model that has started inventing from multiplying its cost.
+    """
+    from membrain.extract import MAX_QUOTE_REPAIRS
+
+    _, store, _, retriever = extractor
+    store.append_episodes([episode(f"e{i}", "user", f"我不吃辣，第 {i} 条记录") for i in range(1, 5)])
+    operations = [{"op": "add", "type": "fact", "subject": f"subject-{i}", "claim": f"Claim {i}",
+                   "episode": f"e{i}", "quote": f"编造的引用{i}", "durable": True} for i in range(1, 5)]
+    llm = FakeLLMClient(
+        [{"operations": operations}]
+        + [{"quote": f"还是编造的{i}"} for i in range(MAX_QUOTE_REPAIRS)]
+    )
+    report = Extractor(store, retriever, llm).run("s1")
+
+    assert len(_repair_calls(llm)) == MAX_QUOTE_REPAIRS
+    assert report.repaired == 0
+    assert report.rejected == len(operations)
+    assert store.live_facts() == []
