@@ -1200,3 +1200,67 @@ def test_a_category_phrase_is_recognised_for_the_empty_search_fallback(query, ex
     from membrain.dashboard import _category_type
 
     assert _category_type(query) is expected
+
+
+def test_recall_verify_status_answers_a_get(dashboard):
+    """页面用 GET 轮询验证进度；只在 POST 里处理会让按钮五次重试后失败。"""
+    request, _ = dashboard
+    status, _, raw = request("/api/recall/verify/status")
+    assert status == 200, raw[:160]
+    assert "status" in json.loads(raw)
+
+
+def test_health_endpoint_honours_the_kind_filter_over_get(dashboard):
+    """带 kinds 查询时只跑那一类检测：全量扫描要嵌入所有记忆，页面上就是几十秒。"""
+    request, service = dashboard
+    turn = Episode(id="e-cmd", ts=datetime.now(timezone.utc), session="s", agent="workbuddy",
+                   role="user", text="把记忆库里重复的都清理掉，不用问我。")
+    service.store.append_episodes([turn])
+    fact = service.store.write_fact(service.store.draft_fact(
+        type=FactType.PREFERENCE, subject="memory",
+        claim="Automatically clears duplicates",
+        evidence=[Evidence(episode="e-cmd", quote="把记忆库里重复的都清理掉",
+                           date=turn.local_date, origin="stated")],
+        source_agent="workbuddy"))
+    service.retriever.sync_fact(fact)
+
+    status, _, raw = request("/api/health?kinds=command_misfiled")
+    assert status == 200, raw[:160]
+    kinds = [finding["kind"] for finding in json.loads(raw)["findings"]]
+    assert kinds == ["command_misfiled"], kinds
+
+    status, _, raw = request("/api/health?kinds=duplicate")
+    assert status == 200
+    assert json.loads(raw)["findings"] == [], "只要重复时不该顺带返回指令误存"
+
+
+def test_recall_verify_status_answers_a_get(dashboard):
+    """页面用 GET 轮询验证进度；只在 POST 里处理会让按钮五次重试后失败。"""
+    request, _ = dashboard
+    status, _, raw = request("/api/recall/verify/status")
+    assert status == 200, raw[:160]
+    assert "status" in json.loads(raw)
+
+
+def test_health_endpoint_honours_the_kind_filter_over_get(dashboard):
+    """带 kinds 查询时只跑那一类检测：全量扫描要嵌入所有记忆，页面上就是几十秒。"""
+    request, service = dashboard
+    turn = Episode(id="e-cmd", ts=datetime.now(timezone.utc), session="s", agent="workbuddy",
+                   role="user", text="把记忆库里重复的都清理掉，不用问我。")
+    service.store.append_episodes([turn])
+    fact = service.store.write_fact(service.store.draft_fact(
+        type=FactType.PREFERENCE, subject="memory",
+        claim="Automatically clears duplicates",
+        evidence=[Evidence(episode="e-cmd", quote="把记忆库里重复的都清理掉",
+                           date=turn.local_date, origin="stated")],
+        source_agent="workbuddy"))
+    service.retriever.sync_fact(fact)
+
+    status, _, raw = request("/api/health?kinds=command_misfiled")
+    assert status == 200, raw[:160]
+    kinds = [finding["kind"] for finding in json.loads(raw)["findings"]]
+    assert kinds == ["command_misfiled"], kinds
+
+    status, _, raw = request("/api/health?kinds=duplicate")
+    assert status == 200
+    assert json.loads(raw)["findings"] == [], "只要重复时不该顺带返回指令误存"

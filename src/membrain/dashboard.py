@@ -1526,7 +1526,16 @@ def make_handler(runtime: DashboardRuntime):
                     self._json(200, {"agents": items})
                 elif parsed.path == "/api/health":
                     query = parse_qs(parsed.query)
-                    self._json(200, runtime.health_report(refresh="refresh" in query))
+                    # Asking for one kind must not pay for the duplicate
+                    # detector's embedding pass over every memory.
+                    kinds = {k.strip() for k in query.get("kinds", []) if k.strip()}
+                    self._json(200, runtime.health_report(
+                        refresh="refresh" in query, kinds=kinds or None))
+                elif parsed.path == "/api/recall/verify/status":
+                    # The page polls this while a verification runs; it is a
+                    # read, so a GET must answer it. Handling it only in POST
+                    # left the button failing after five retries.
+                    self._json(200, runtime.recall_verify_status())
                 elif parsed.path == "/api/tasks":
                     tasks = runtime.service.retriever.open_tasks(limit=50)
                     self._json(200, {"tasks": [
