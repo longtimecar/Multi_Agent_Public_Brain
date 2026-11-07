@@ -1,5 +1,7 @@
 # membrain
 
+[![tests](https://github.com/longtimecar/Multi_Agent_Public_Brain/actions/workflows/tests.yml/badge.svg)](https://github.com/longtimecar/Multi_Agent_Public_Brain/actions/workflows/tests.yml)
+
 Portable, user-owned long-term memory shared across AI agents.
 
 Design and reasoning: [docs/DESIGN.md](docs/DESIGN.md). Status and next tasks:
@@ -28,15 +30,18 @@ that makes this memory yours rather than a vendor's.
    (`retract`, `contest`, `resolve`, `supersede`) are appended to
    `ledger.jsonl` and folded at read time.
 2. **No `trait` type.** The ontology has `constraint`, `fact`, `preference`,
-   `goal`, `project`. Inferred personality and decision-style claims are not
-   representable, so no prompt can drift the system into a flattering caricature.
+   `goal`, `project`, plus `task`, `tool`, `entity`, `event`, `case` and `belief`.
+   Inferred personality and decision-style claims are not representable, so no
+   prompt can drift the system into a flattering caricature.
 3. **Evidence or nothing.** Every claim carries a verbatim quote and the
    episode it came from. No quote, no write.
 4. **Confidence is computed in code.** Models cluster at 0.8-0.9 regardless of
    truth, so the score comes from evidence count, time spread, stated-vs-inferred,
    and contradiction status.
-5. **A single observation is never asserted.** One-episode claims are capped at
-   0.40 and injected as questions. Silence never counts as confirmation.
+5. **Confidence tracks evidence, not just count.** A plain first-person statement
+   ("I'm allergic to peanuts") is asserted from one episode (0.62–0.70); a hedged
+   one ("maybe", "也许") stays under 0.40 until it recurs across days. Silence
+   never counts as confirmation.
 6. **Conflicts are surfaced, never auto-resolved.** Detection is automatic and
    mechanical; resolution is `membrain resolve`, by you.
 7. **Constraints are human-only.** No MCP tool can write a `constraint`, so a
@@ -45,8 +50,8 @@ that makes this memory yours rather than a vendor's.
 ## Install
 
 ```bash
-git clone https://github.com/<you>/membrain.git
-cd membrain
+git clone https://github.com/longtimecar/Multi_Agent_Public_Brain.git
+cd Multi_Agent_Public_Brain
 uv sync
 uv run membrain init
 ```
@@ -107,6 +112,8 @@ as the CLI and MCP server. The service binds to loopback only. Its interface
 can add facts from owner-entered quotes, replace or retract memories, review
 conflicts, trigger extraction, and rebuild the disposable index. Fact Markdown
 files remain immutable; lifecycle changes are appended to the ledger.
+
+![membrain dashboard — memory overview](docs/images/dashboard.png)
 
 `add --type constraint` is the only way to create a hard constraint. That is
 deliberate.
@@ -202,6 +209,7 @@ budget enforcement without mid-item truncation, conflict surfacing without
 resolution, explicit resolution, index rebuild from Markdown, and evidence
 validation.
 
-For live workflow checks see [docs/TESTING.md](docs/TESTING.md). Project hooks
-are not yet installed globally and cross-agent behavior still requires manual
-acceptance testing.
+For live workflow checks see [docs/TESTING.md](docs/TESTING.md). Capture and
+recall are exercised in daily use across Claude Code, Codex, Qoder and other
+hooked agents; `uv run membrain doctor` reports backend reachability, index
+health and which agents are connected on your machine.

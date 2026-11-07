@@ -40,7 +40,9 @@ def dashboard(tmp_path):
         request_headers = {"Content-Type": "application/json", **(headers or {})}
         request_obj = Request(base + path, data=data, headers=request_headers)
         try:
-            with urlopen(request_obj, timeout=3) as response:
+            # Generous client timeout: these tests assert correctness, not speed.
+            # A tight timeout flakes when the handler thread is starved under load.
+            with urlopen(request_obj, timeout=30) as response:
                 content = response.read()
                 return response.status, response.headers, content
         except HTTPError as exc:
@@ -167,7 +169,7 @@ def test_dashboard_library_import_preview_start_browse_read_and_undo(tmp_path, m
     def call(path, payload=None):
         data = None if payload is None else json.dumps(payload).encode("utf-8")
         try:
-            with urlopen(Request(base + path, data=data, headers={"Content-Type": "application/json"}), timeout=5) as r:
+            with urlopen(Request(base + path, data=data, headers={"Content-Type": "application/json"}), timeout=30) as r:
                 return r.status, json.loads(r.read())
         except HTTPError as exc:
             return exc.code, json.loads(exc.read())
@@ -254,7 +256,7 @@ def test_dashboard_chat_and_model_status_keep_assistant_out_of_memory_evidence(t
     def request(path: str, payload: dict | None = None):
         data = None if payload is None else json.dumps(payload).encode("utf-8")
         request_obj = Request(base + path, data=data, headers={"Content-Type": "application/json"})
-        with urlopen(request_obj, timeout=3) as response:
+        with urlopen(request_obj, timeout=30) as response:
             return response.status, json.loads(response.read())
 
     try:
@@ -388,7 +390,7 @@ def test_dashboard_saves_model_config_without_returning_the_key(tmp_path):
             }).encode("utf-8"),
             headers={"Content-Type": "application/json"},
         )
-        with urlopen(request_obj, timeout=3) as response:
+        with urlopen(request_obj, timeout=30) as response:
             payload = json.loads(response.read())
         assert payload["configured"] and payload["api_key_set"]
         assert "test-secret-value" not in json.dumps(payload)

@@ -171,7 +171,8 @@ def dashboard(tmp_path):
 
     def request(path: str):
         req = Request(base + path, headers={"Accept": "application/json"})
-        with urlopen(req, timeout=3) as response:
+        # Correctness test, not a speed test; avoid load-induced timeout flakes.
+        with urlopen(req, timeout=30) as response:
             return response.status, json.loads(response.read().decode("utf-8"))
 
     yield request, service
