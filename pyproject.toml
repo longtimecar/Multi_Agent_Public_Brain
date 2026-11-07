@@ -10,6 +10,9 @@ dependencies = [
     "numpy>=1.26",
     "zstandard>=0.25.0",
     "pypdf>=5.0",
+    # Windows ships no IANA timezone database; without tzdata, ZoneInfo("Asia/…")
+    # raises and MEMBRAIN_TZ silently falls back to the system timezone.
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]
