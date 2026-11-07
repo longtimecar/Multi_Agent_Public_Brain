@@ -357,72 +357,111 @@
         </div>
 
         <div class="view" data-view-panel="model">
-          <section class="panel model-panel" id="model">
-            <div class="panel-header"><div><h2>模型连接</h2><p class="panel-subtitle">模型只通过本地后台调用</p></div><span class="status-badge status-superseded" id="model-status-badge">未检查</span></div>
-            <div class="model-body">
-              <div class="model-primary"><span class="model-dot" id="model-dot"></span><div><strong id="model-name">正在读取配置</strong><span id="model-format">—</span></div></div>
-              <dl class="model-details"><div><dt>接口格式</dt><dd id="model-api-format">—</dd></div><div><dt>API Key</dt><dd id="model-key-status">—</dd></div><div><dt>超时</dt><dd id="model-timeout">—</dd></div><div><dt>Embedding</dt><dd id="model-embedding">—</dd></div></dl>
-              <button class="button button-outline model-test-button" id="model-test-button" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v4m0 10v4M3 12h4m10 0h4M5.6 5.6l2.8 2.8m7.2 7.2 2.8 2.8m0-12.8-2.8 2.8m-7.2 7.2-2.8 2.8"/></svg><span>测试模型连接</span></button>
-              <button class="button button-outline" id="config-reload-button" type="button" title="重新读取 .env，无需重启"><span>重新加载配置</span></button>
-              <div class="recall-quality" id="recall-quality">
-                <div class="recall-quality-head"><strong>召回质量</strong><span id="recall-baseline-info">未建立基线</span></div>
-                <p class="health-summary-line" id="recall-baseline-note">建立基线后，每次换 embedding 模型或阈值都会自动对比，防止检索悄悄变差。</p>
-                <div class="agent-actions"><button class="button button-outline" id="recall-verify-button" type="button"><span>验证召回质量</span></button></div>
-                <p class="model-result" id="recall-verify-result"></p>
+          <div class="model-grid">
+            <section class="panel model-panel model-panel-wide" id="model">
+              <div class="panel-header"><div><h2>模型连接</h2><p class="panel-subtitle">模型只通过本地后台调用</p></div><span class="status-badge status-superseded" id="model-status-badge">未检查</span></div>
+              <div class="model-body">
+                <div class="model-top">
+                  <div class="model-summary">
+                    <div class="model-primary"><span class="model-dot" id="model-dot"></span><div><strong id="model-name">正在读取配置</strong><span id="model-format">—</span></div></div>
+                    <dl class="model-details"><div><dt>接口格式</dt><dd id="model-api-format">—</dd></div><div><dt>API Key</dt><dd id="model-key-status">—</dd></div><div><dt>超时</dt><dd id="model-timeout">—</dd></div><div><dt>Embedding</dt><dd id="model-embedding">—</dd></div></dl>
+                    <div class="model-actions">
+                      <button class="button button-outline" id="model-test-button" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v4m0 10v4M3 12h4m10 0h4M5.6 5.6l2.8 2.8m7.2 7.2 2.8 2.8m0-12.8-2.8 2.8m-7.2 7.2-2.8 2.8"/></svg><span>测试模型连接</span></button>
+                      <button class="button button-outline" id="config-reload-button" type="button" title="重新读取 .env，无需重启"><span>重新加载配置</span></button>
+                    </div>
+                    <p class="model-result" id="model-result">连接状态会在这里显示。</p>
+                  </div>
+                  <div class="recall-quality" id="recall-quality">
+                    <div class="recall-quality-head"><strong>召回质量</strong><span id="recall-baseline-info">未建立基线</span></div>
+                    <p class="health-summary-line" id="recall-baseline-note">建立基线后，每次换 embedding 模型或阈值都会自动对比，防止检索悄悄变差。</p>
+                    <div class="agent-actions"><button class="button button-outline" id="recall-verify-button" type="button"><span>验证召回质量</span></button></div>
+                    <p class="model-result" id="recall-verify-result"></p>
+                  </div>
+                </div>
+                <details class="model-config" id="model-config"><summary>配置或更换模型</summary>
+                  <form id="model-config-form">
+                    <div class="config-grid">
+                      <label class="config-field"><span>接口格式</span><select id="model-config-format" name="format"><option value="openai">OpenAI 兼容</option><option value="anthropic">Anthropic</option></select></label>
+                      <label class="config-field"><span>超时（秒）</span><input id="model-config-timeout" name="timeout" type="number" min="1" max="300" step="1" value="30"></label>
+                      <label class="config-field config-field-wide"><span>接口地址</span><input id="model-config-base-url" name="base_url" type="url" placeholder="https://api.example.com/v1" required></label>
+                      <label class="config-field config-field-wide"><span>模型名称</span><input id="model-config-model" name="model" type="text" placeholder="例如 gpt-4o-mini" required></label>
+                      <label class="config-field config-field-wide"><span>API Key <small>留空保持现有 Key</small></span><input id="model-config-key" name="api_key" type="password" autocomplete="new-password" placeholder="不会回显已保存的 Key"></label>
+                    </div>
+                    <div class="config-foot">
+                      <label class="config-clear"><input id="model-config-clear-key" name="clear_api_key" type="checkbox" value="true"><span>清除已保存的 API Key</span></label>
+                      <button class="button button-dark config-submit" type="submit">保存模型配置</button>
+                    </div>
+                  </form>
+                </details>
               </div>
-              <p class="model-result" id="model-result">连接状态会在这里显示。</p>
-              <details class="model-config" id="model-config"><summary>配置或更换模型</summary>
-                <form id="model-config-form">
-                  <div class="config-grid"><label class="config-field"><span>接口格式</span><select id="model-config-format" name="format"><option value="openai">OpenAI 兼容</option><option value="anthropic">Anthropic</option></select></label><label class="config-field"><span>超时（秒）</span><input id="model-config-timeout" name="timeout" type="number" min="1" max="300" step="1" value="30"></label></div>
-                  <label class="config-field"><span>接口地址</span><input id="model-config-base-url" name="base_url" type="url" placeholder="https://api.example.com/v1" required></label>
-                  <label class="config-field"><span>模型名称</span><input id="model-config-model" name="model" type="text" placeholder="例如 gpt-4o-mini" required></label>
-                  <label class="config-field"><span>API Key <small>留空保持现有 Key</small></span><input id="model-config-key" name="api_key" type="password" autocomplete="new-password" placeholder="不会回显已保存的 Key"></label>
-                  <label class="config-clear"><input id="model-config-clear-key" name="clear_api_key" type="checkbox" value="true"><span>清除已保存的 API Key</span></label>
-                  <button class="button button-dark config-submit" type="submit">保存模型配置</button>
-                </form>
-              </details>
-            </div>
-          </section>
+            </section>
 
-          <section class="panel model-panel" id="embedding">
-            <div class="panel-header"><div><h2>Embedding 连接</h2><p class="panel-subtitle">语义检索用；留空则退回全文检索</p></div><span class="status-badge status-superseded" id="embedding-status-badge">未检查</span></div>
-            <div class="model-body">
-              <div class="model-primary"><span class="model-dot" id="embedding-dot"></span><div><strong id="embedding-name">正在读取配置</strong><span id="embedding-format">—</span></div></div>
-              <dl class="model-details"><div><dt>模型名称</dt><dd id="embedding-model">—</dd></div><div><dt>API Key</dt><dd id="embedding-key-status">—</dd></div><div><dt>超时</dt><dd id="embedding-timeout">—</dd></div><div><dt>检索模式</dt><dd id="embedding-mode">—</dd></div></dl>
-              <button class="button button-outline model-test-button" id="embedding-test-button" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v4m0 10v4M3 12h4m10 0h4M5.6 5.6l2.8 2.8m7.2 7.2l2.8 2.8m0-12.8-2.8 2.8m-7.2 7.2-2.8 2.8"/></svg><span>测试 Embedding 连接</span></button>
-              <p class="model-result" id="embedding-result">连接状态会在这里显示。</p>
-              <details class="model-config" id="embedding-config"><summary>配置或更换 Embedding 模型</summary>
-                <form id="embedding-config-form">
-                  <div class="config-grid"><label class="config-field"><span>超时（秒）</span><input id="embedding-config-timeout" name="timeout" type="number" min="1" max="300" step="1" value="20"></label><label class="config-field"><span>模型名称</span><input id="embedding-config-model" name="model" type="text" placeholder="例如 text-embedding-3-small"></label></div>
-                  <label class="config-field"><span>接口地址 <small>留空则关闭语义检索</small></span><input id="embedding-config-base-url" name="base_url" type="url" placeholder="https://api.example.com/v1"></label>
-                  <label class="config-field"><span>API Key <small>留空保持现有 Key</small></span><input id="embedding-config-key" name="api_key" type="password" autocomplete="new-password" placeholder="不会回显已保存的 Key"></label>
-                  <label class="config-clear"><input id="embedding-config-clear-key" name="clear_api_key" type="checkbox" value="true"><span>清除已保存的 API Key</span></label>
-                  <p class="model-hint">更换 Embedding 模型后需要重新索引：<code>uv run membrain reindex</code></p>
-                  <button class="button button-dark config-submit" type="submit">保存 Embedding 配置</button>
-                </form>
-              </details>
-            </div>
-          </section>
-          <section class="panel model-panel" id="rerank">
-            <div class="panel-header"><div><h2>重排模型（Rerank）</h2><p class="panel-subtitle">和 Embedding 是两个模型：Embedding 负责初筛，重排给候选重新打分；留空则不启用</p></div><span class="status-badge status-superseded" id="rerank-status-badge">未检查</span></div>
-            <div class="model-body">
-              <div class="model-primary"><span class="model-dot" id="rerank-dot"></span><div><strong id="rerank-name">正在读取配置</strong><span id="rerank-format">—</span></div></div>
-              <dl class="model-details"><div><dt>模型名称</dt><dd id="rerank-model">—</dd></div><div><dt>API Key</dt><dd id="rerank-key-status">—</dd></div><div><dt>超时</dt><dd id="rerank-timeout">—</dd></div><div><dt>检索模式</dt><dd id="rerank-mode">—</dd></div></dl>
-              <button class="button button-outline model-test-button" id="rerank-test-button" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v4m0 10v4M3 12h4m10 0h4M5.6 5.6l2.8 2.8m7.2 7.2 2.8 2.8m0-12.8-2.8 2.8m-7.2 7.2-2.8 2.8"/></svg><span>测试重排连接</span></button>
-              <p class="model-result" id="rerank-result">连接状态会在这里显示。</p>
-              <details class="model-config" id="rerank-config"><summary>配置或更换重排模型</summary>
-                <form id="rerank-config-form">
-                  <div class="config-grid"><label class="config-field"><span>超时（秒）</span><input id="rerank-config-timeout" name="timeout" type="number" min="1" max="300" step="1" value="20"></label><label class="config-field"><span>模型名称</span><input id="rerank-config-model" name="model" type="text" placeholder="例如 BAAI/bge-reranker-v2-m3"></label></div>
-                  <label class="config-field"><span>接口地址 <small>留空则关闭重排</small></span><input id="rerank-config-base-url" name="base_url" type="url" placeholder="https://api.siliconflow.cn/v1"></label>
-                  <label class="config-field"><span>API Key <small>留空保持现有 Key</small></span><input id="rerank-config-key" name="api_key" type="password" autocomplete="new-password" placeholder="不会回显已保存的 Key"></label>
-                  <label class="config-clear"><input id="rerank-config-clear-key" name="clear_api_key" type="checkbox" value="true"><span>清除已保存的 API Key</span></label>
-                  <label class="config-clear"><input id="rerank-config-enabled" name="enabled" type="checkbox" value="true" checked><span>启用重排（关闭后仅用混合检索排序）</span></label>
-                  <p class="model-hint">免费方案：硅基流动 <code>BAAI/bge-reranker-v2-m3</code>，地址填 <code>https://api.siliconflow.cn/v1</code>。保存后点“测试重排连接”即可验证。</p>
-                  <button class="button button-dark config-submit" type="submit">保存重排配置</button>
-                </form>
-              </details>
-            </div>
-          </section>
+            <section class="panel model-panel" id="embedding">
+              <div class="panel-header"><div><h2>Embedding 连接</h2><p class="panel-subtitle">语义检索用；留空则退回全文检索</p></div><span class="status-badge status-superseded" id="embedding-status-badge">未检查</span></div>
+              <div class="model-body">
+                <div class="model-primary"><span class="model-dot" id="embedding-dot"></span><div><strong id="embedding-name">正在读取配置</strong><span id="embedding-format">—</span></div></div>
+                <dl class="model-details"><div><dt>模型名称</dt><dd id="embedding-model">—</dd></div><div><dt>API Key</dt><dd id="embedding-key-status">—</dd></div><div><dt>超时</dt><dd id="embedding-timeout">—</dd></div><div><dt>检索模式</dt><dd id="embedding-mode">—</dd></div></dl>
+                <div class="model-actions"><button class="button button-outline" id="embedding-test-button" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v4m0 10v4M3 12h4m10 0h4M5.6 5.6l2.8 2.8m7.2 7.2 2.8 2.8m0-12.8-2.8 2.8m-7.2 7.2-2.8 2.8"/></svg><span>测试 Embedding 连接</span></button></div>
+                <p class="model-result" id="embedding-result">连接状态会在这里显示。</p>
+                <details class="model-config" id="embedding-config"><summary>配置或更换 Embedding 模型</summary>
+                  <form id="embedding-config-form">
+                    <div class="config-grid">
+                      <label class="config-field"><span>模型名称</span><input id="embedding-config-model" name="model" type="text" placeholder="例如 text-embedding-3-small"></label>
+                      <label class="config-field"><span>超时（秒）</span><input id="embedding-config-timeout" name="timeout" type="number" min="1" max="300" step="1" value="20"></label>
+                      <label class="config-field config-field-wide"><span>接口地址 <small>留空则关闭语义检索</small></span><input id="embedding-config-base-url" name="base_url" type="url" placeholder="https://api.example.com/v1"></label>
+                      <label class="config-field config-field-wide"><span>API Key <small>留空保持现有 Key</small></span><input id="embedding-config-key" name="api_key" type="password" autocomplete="new-password" placeholder="不会回显已保存的 Key"></label>
+                    </div>
+                    <p class="model-hint">更换 Embedding 模型后需要重新索引：<code>uv run membrain reindex</code></p>
+                    <div class="config-foot">
+                      <label class="config-clear"><input id="embedding-config-clear-key" name="clear_api_key" type="checkbox" value="true"><span>清除已保存的 API Key</span></label>
+                      <button class="button button-dark config-submit" type="submit">保存 Embedding 配置</button>
+                    </div>
+                  </form>
+                </details>
+              </div>
+            </section>
+
+            <section class="panel model-panel" id="rerank">
+              <div class="panel-header"><div><h2>重排模型（Rerank）</h2><p class="panel-subtitle">和 Embedding 是两个模型：Embedding 初筛，重排给候选重新打分</p></div><span class="status-badge status-superseded" id="rerank-status-badge">未检查</span></div>
+              <div class="model-body">
+                <div class="model-primary"><span class="model-dot" id="rerank-dot"></span><div><strong id="rerank-name">正在读取配置</strong><span id="rerank-format">—</span></div></div>
+                <dl class="model-details"><div><dt>模型名称</dt><dd id="rerank-model">—</dd></div><div><dt>API Key</dt><dd id="rerank-key-status">—</dd></div><div><dt>超时</dt><dd id="rerank-timeout">—</dd></div><div><dt>检索模式</dt><dd id="rerank-mode">—</dd></div></dl>
+                <div class="model-actions"><button class="button button-outline" id="rerank-test-button" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v4m0 10v4M3 12h4m10 0h4M5.6 5.6l2.8 2.8m7.2 7.2 2.8 2.8m0-12.8-2.8 2.8m-7.2 7.2-2.8 2.8"/></svg><span>测试重排连接</span></button></div>
+                <p class="model-result" id="rerank-result">连接状态会在这里显示。</p>
+                <details class="model-config" id="rerank-config"><summary>配置或更换重排模型</summary>
+                  <form id="rerank-config-form">
+                    <div class="config-grid">
+                      <label class="config-field"><span>模型名称</span><input id="rerank-config-model" name="model" type="text" placeholder="例如 BAAI/bge-reranker-v2-m3"></label>
+                      <label class="config-field"><span>超时（秒）</span><input id="rerank-config-timeout" name="timeout" type="number" min="1" max="300" step="1" value="20"></label>
+                      <label class="config-field config-field-wide"><span>接口地址 <small>留空则关闭重排</small></span><input id="rerank-config-base-url" name="base_url" type="url" placeholder="https://api.siliconflow.cn/v1"></label>
+                      <label class="config-field config-field-wide"><span>API Key <small>留空保持现有 Key</small></span><input id="rerank-config-key" name="api_key" type="password" autocomplete="new-password" placeholder="不会回显已保存的 Key"></label>
+                    </div>
+                    <p class="model-hint">免费方案：硅基流动 <code>BAAI/bge-reranker-v2-m3</code>，地址填 <code>https://api.siliconflow.cn/v1</code>。</p>
+                    <div class="config-foot">
+                      <label class="config-clear"><input id="rerank-config-clear-key" name="clear_api_key" type="checkbox" value="true"><span>清除已保存的 API Key</span></label>
+                      <label class="config-clear"><input id="rerank-config-enabled" name="enabled" type="checkbox" value="true" checked><span>启用重排</span></label>
+                      <button class="button button-dark config-submit" type="submit">保存重排配置</button>
+                    </div>
+                  </form>
+                </details>
+              </div>
+            </section>
+
+            <section class="panel model-panel model-panel-wide" id="service">
+              <div class="panel-header"><div><h2>服务与启动</h2><p class="panel-subtitle">登录 Windows 后自动在后台运行，不打开浏览器</p></div><span class="status-badge status-superseded" id="autostart-badge">读取中</span></div>
+              <div class="model-body">
+                <div class="service-row">
+                  <div class="service-copy">
+                    <strong>开机自启动</strong>
+                    <p>开启后，登录系统时自动启动记忆服务，捕获不中断。启动过程留在后台，不会弹出浏览器。</p>
+                    <p class="model-hint" id="autostart-detail">正在读取开机启动项…</p>
+                  </div>
+                  <button class="switch" id="autostart-toggle" type="button" role="switch" aria-checked="false" aria-label="开机自启动"><span class="switch-thumb"></span></button>
+                </div>
+                <p class="model-result" id="autostart-result"></p>
+              </div>
+            </section>
+          </div>
         </div>
       </div>
     </main>

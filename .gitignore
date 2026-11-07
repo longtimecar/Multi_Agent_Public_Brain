@@ -46,3 +46,6 @@ reference_materials/
 content_directions/
 docs/backups/
 docs/evidence/
+# 运行时产物（自启开关会按当前安装路径重新生成）
+.runtime/
+start-dashboard-silent.vbs

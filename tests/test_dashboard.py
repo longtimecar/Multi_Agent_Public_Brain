@@ -1344,3 +1344,111 @@ def test_rerank_config_is_saved_and_applied_without_a_restart(tmp_path):
         assert off["rerank_provider"] == "heuristic"
     finally:
         service.index.close()
+
+
+def test_the_autostart_toggle_reads_and_writes_through_the_api(dashboard, monkeypatch):
+    """开关要能读状态、能写状态，失败时说清原因。"""
+    request, _ = dashboard
+    from membrain import autostart
+
+    monkeypatch.setattr(autostart, "describe", lambda: {
+        "supported": True, "enabled": False, "silent": False,
+        "launcher": "", "link": "x", "port": 1966})
+    calls: list[bool] = []
+
+    def fake_set(enabled: bool) -> dict:
+        calls.append(enabled)
+        return {"supported": True, "enabled": enabled, "silent": enabled,
+                "launcher": autostart.SILENT_LAUNCHER, "link": "x", "port": 1966}
+
+    monkeypatch.setattr(autostart, "set_enabled", fake_set)
+
+    status, _, raw = request("/api/autostart")
+    assert status == 200 and json.loads(raw)["enabled"] is False
+
+    status, _, raw = request("/api/autostart", {"enabled": True})
+    assert status == 200 and json.loads(raw)["silent"] is True
+    assert calls == [True]
+
+    def blocked(enabled: bool) -> dict:
+        raise autostart.AutostartError("系统拦截了启动项")
+
+    monkeypatch.setattr(autostart, "set_enabled", blocked)
+    status, _, raw = request("/api/autostart", {"enabled": False})
+    assert status == 400 and "拦截" in json.loads(raw)["error"], raw[:120]
+
+
+def test_a_search_result_keeps_its_ranking(dashboard, monkeypatch):
+    """搜索结果按相关度排，不能再被时间倒序覆盖。
+
+    修之前搜「怎么汇报进度」，第一条是一条只共享了「进度」二字的任务记录，
+    真正回答这个问题的偏好被压到后面。
+    """
+    request, service = dashboard
+    from urllib.parse import quote
+
+    from membrain.retrieval import RecallResult
+
+    def fact(claim: str, when: date, episode: str) -> object:
+        return service.store.write_fact(service.store.draft_fact(
+            type=FactType.PREFERENCE, subject="reporting", claim=claim,
+            evidence=[Evidence(episode=episode, quote=claim, date=when, origin="stated")],
+            source_agent="workbuddy"))
+
+    relevant = fact("汇报进度要先说结论，再列证据", date(2026, 1, 1), "e-old")
+    recent = fact("Confirm all non-todo items are unaffected", date(2026, 11, 6), "e-new")
+
+    monkeypatch.setattr(service.retriever, "recall",
+                        lambda query, top_k=100: RecallResult(
+                            hits=[relevant, recent], text="", tokens=0, mode="similarity"))
+
+    status, _, raw = request("/api/facts?q=" + quote("怎么汇报进度"))
+    assert status == 200
+    ids = [item["id"] for item in json.loads(raw)["items"]]
+    assert ids[:2] == [relevant.id, recent.id], "相关的那条必须排在新记录前面"
+
+
+def _wait_for_job(request, job_id: str) -> dict:
+    job: dict = {}
+    for _ in range(100):
+        time.sleep(0.1)
+        job = json.loads(request("/api/jobs/extract")[2])
+        if job.get("id") == job_id and job.get("status") != "running":
+            return job
+    return job
+
+
+def test_a_pass_that_skips_one_session_is_done_with_warnings(dashboard, monkeypatch):
+    """个别会话校验不过，不该把整轮提炼标成失败。
+
+    每轮都红着一条 error，看起来像服务坏了，实际记忆一直在正常写入：
+    失败的是模型给出的引文对不上原文，那个会话被跳过而已。
+    """
+    request, _ = dashboard
+    from membrain.extract import ExtractionReport, Extractor
+
+    report = ExtractionReport(errors=["s1: giving up after 3 retries with rejections outstanding"])
+    report.sessions = 4
+    report.facts_added = 7
+    monkeypatch.setattr(Extractor, "run", lambda self, session=None: report)
+
+    status, _, raw = request("/api/jobs/extract", {})
+    assert status == 202
+    job = _wait_for_job(request, json.loads(raw)["id"])
+    assert job["status"] == "done"
+    assert job["error"] is None
+    assert job["warnings"], "跳过的会话仍要能看到，不能吞掉"
+
+
+def test_a_pass_that_processed_nothing_is_a_real_error(dashboard, monkeypatch):
+    request, _ = dashboard
+    from membrain.extract import ExtractionReport, Extractor
+
+    report = ExtractionReport(errors=["模型连接失败"])
+    monkeypatch.setattr(Extractor, "run", lambda self, session=None: report)
+
+    status, _, raw = request("/api/jobs/extract", {})
+    assert status == 202
+    job = _wait_for_job(request, json.loads(raw)["id"])
+    assert job["status"] == "error"
+    assert "模型连接失败" in job["error"]

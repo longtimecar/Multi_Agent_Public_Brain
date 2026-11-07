@@ -195,6 +195,55 @@ function renderModel(data) {
   renderRerank(data);
 }
 
+function renderAutostart(data) {
+  const toggle = $('#autostart-toggle');
+  const badge = $('#autostart-badge');
+  const detail = $('#autostart-detail');
+  if (!toggle || !badge || !detail) return;
+  const supported = Boolean(data.supported);
+  toggle.disabled = !supported;
+  toggle.setAttribute('aria-checked', data.enabled ? 'true' : 'false');
+  if (!supported) {
+    badge.className = 'status-badge status-superseded';
+    badge.textContent = '不支持';
+    detail.textContent = '当前系统不是 Windows：需要自行配置开机启动。';
+    return;
+  }
+  badge.className = `status-badge ${data.enabled ? 'status-active' : 'status-superseded'}`;
+  badge.textContent = data.enabled ? (data.silent ? '已开启' : '已开启 · 会弹浏览器') : '未开启';
+  if (data.enabled && data.silent) {
+    detail.textContent = `已开启（端口 ${data.port}）。想打开界面时双击 start-dashboard.vbs。`;
+  } else if (data.enabled) {
+    detail.textContent = '已开启，但指向会打开浏览器的启动脚本；关掉再开一次就能改成静默启动。';
+  } else {
+    detail.textContent = '未开启：登录后需要手动启动，期间的新对话不会被捕获。';
+  }
+}
+
+async function loadAutostart() {
+  try { renderAutostart(await fetchJson('/api/autostart')); }
+  catch { /* 自启状态读不到不影响其他设置 */ }
+}
+
+async function toggleAutostart() {
+  const toggle = $('#autostart-toggle');
+  const result = $('#autostart-result');
+  const next = toggle.getAttribute('aria-checked') !== 'true';
+  toggle.disabled = true;
+  result.textContent = next ? '正在写入开机启动项…' : '正在移除开机启动项…';
+  try {
+    const data = await fetchJson('/api/autostart', { method: 'POST', body: JSON.stringify({ enabled: next }) });
+    renderAutostart(data);
+    result.textContent = next
+      ? '已开启：下次登录系统时自动在后台启动，不会打开浏览器。'
+      : '已关闭：登录系统后不再自动启动。';
+  } catch (error) {
+    result.textContent = error.message;
+    notify(error.message, true);
+  }
+  toggle.disabled = false;
+}
+
 function renderRerank(data) {
   const configured = Boolean(data.rerank_configured);
   const enabled = Boolean(data.rerank_enabled);
@@ -907,7 +956,12 @@ async function pollExtract(jobId) {
       const job = await fetchJson('/api/jobs/extract');
       if (job.id !== jobId || job.status === 'idle' || job.status === 'running') continue;
       if (job.status === 'error') notify(job.error || '提取失败，请检查模型连接。', true);
-      else notify(`提取完成：新增 ${job.report?.facts_added ?? 0}，更新 ${job.report?.corroborated ?? 0} 条记忆`);
+      else {
+        const added = job.report?.facts_added ?? 0;
+        const skipped = (job.warnings || []).length;
+        const tail = skipped ? `；${skipped} 场已跳过（${job.warnings[0]}）` : '';
+        notify(`提取完成：新增 ${added}，更新 ${job.report?.corroborated ?? 0} 条记忆${tail}`, skipped > 0 && added === 0);
+      }
       await loadData();
       return;
     } catch (error) { notify(error.message, true); return; }
@@ -1639,6 +1693,7 @@ function switchView(name, opts = {}) {
   if (panelName === 'library') { initRagUi(); loadRag(); loadLibrary(); }
   if (panelName === 'agents') loadAgents();
   if (panelName === 'health') loadHealth();
+  if (panelName === 'model') loadAutostart();
 }
 
 function refreshCurrentView() {
@@ -1653,6 +1708,7 @@ let searchTimer;
 function bind() {
   $('#agents-copy-all')?.addEventListener('click', copyAllPrompts);
   $('#agents-scan-button').addEventListener('click', loadAgents);
+  $('#autostart-toggle')?.addEventListener('click', toggleAutostart);
   $('#agents-show-all')?.addEventListener('change', (event) => {
     try { localStorage.setItem('membrain.agentShowAll', event.target.checked ? '1' : '0'); } catch { /* storage may be disabled */ }
     renderAgents(state.agents || []);
@@ -1863,5 +1919,6 @@ restoreChat();
 loadData();
 loadAgents();
 loadLibrary();
+loadAutostart();
 const initialView = location.hash.replace(/^#\/?/, '');
 if (initialView && initialView !== 'chat' && VIEW_LABELS[initialView]) switchView(initialView);

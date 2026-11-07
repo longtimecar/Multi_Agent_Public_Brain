@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, unquote, urlparse, urlsplit
 
 from pydantic import ValidationError
 
-from . import agents, archive, health, openviking_import, session_import
+from . import agents, archive, autostart, health, openviking_import, session_import
 from . import agents as agent_names
 from .config import DEFAULT_ENV_FILE, IN_CHECKOUT, REPO_ROOT
 from .embeddings import Embedder, EmbeddingError
@@ -1264,7 +1264,8 @@ class DashboardRuntime:
             if self._job["status"] == "running":
                 return dict(self._job), False
             job_id = uuid.uuid4().hex
-            self._job = {"id": job_id, "status": "running", "report": None, "error": None}
+            self._job = {"id": job_id, "status": "running", "report": None, "error": None,
+                         "warnings": []}
 
         def run() -> None:
             try:
@@ -1277,11 +1278,17 @@ class DashboardRuntime:
                     LLMClient(self.service.settings),
                 ).run()
                 with self._job_lock:
+                    # A session that fails its verbatim-quote check three times
+                    # is skipped, not a failed pass: the run still wrote facts
+                    # and the backlog moved. Marking the whole job "error" is
+                    # why every scheduled run looked broken while it worked.
+                    failed_outright = bool(report.errors) and report.sessions == 0
                     self._job = {
                         "id": job_id,
-                        "status": "error" if report.errors else "done",
+                        "status": "error" if failed_outright else "done",
                         "report": report.as_dict(),
-                        "error": "; ".join(report.errors) if report.errors else None,
+                        "error": "; ".join(report.errors) if failed_outright else None,
+                        "warnings": report.errors[:20],
                     }
             except Exception as exc:  # the browser gets a recoverable job error
                 with self._job_lock:
@@ -1384,6 +1391,10 @@ def make_handler(runtime: DashboardRuntime):
             search = query.get("q", [""])[0].strip()
             disabled = service.disabled_agents()
             facts = [fact for fact in service.store.all_facts() if not agents.is_disabled(fact.source.agent, disabled)]
+            # A search result is ordered by relevance. Sorting it by date again
+            # throws that away: the best match for "怎么汇报进度" ended up below
+            # a command that merely shares a word with it.
+            by_relevance = False
             if search:
                 direct = [
                     fact for fact in facts
@@ -1407,11 +1418,13 @@ def make_handler(runtime: DashboardRuntime):
                     if fallback:
                         ordered = [fact for fact in facts if fact.type == fallback]
                 facts = ordered
+                by_relevance = bool(ranked)
             if status:
                 facts = [fact for fact in facts if fact.status.value == status]
             if fact_type:
                 facts = [fact for fact in facts if fact.type.value == fact_type]
-            facts.sort(key=lambda fact: (fact.created_at, fact.id), reverse=True)
+            if not by_relevance:
+                facts.sort(key=lambda fact: (fact.created_at, fact.id), reverse=True)
             limit_raw = query.get("limit", ["500"])[0]
             try:
                 limit = max(1, min(1000, int(limit_raw)))
@@ -1602,6 +1615,8 @@ def make_handler(runtime: DashboardRuntime):
                     self._json(200, runtime.job())
                 elif parsed.path == "/api/model":
                     self._json(200, runtime.model_status())
+                elif parsed.path == "/api/autostart":
+                    self._json(200, autostart.describe())
                 elif parsed.path == "/api/agents":
                     disabled = runtime.service.disabled_agents()
                     items = agents.scan(runtime.service.settings.home)
@@ -1767,6 +1782,8 @@ def make_handler(runtime: DashboardRuntime):
                     self._json(200, runtime.configure_rerank(data))
                 elif path == "/api/model/rerank/test":
                     self._json(200, runtime.test_rerank())
+                elif path == "/api/autostart":
+                    self._json(200, autostart.set_enabled(bool(data.get("enabled"))))
                 elif path == "/api/import/start":
                     job, started = runtime.start_import()
                     self._json(202 if started else 409, job)
@@ -1810,6 +1827,8 @@ def make_handler(runtime: DashboardRuntime):
             except (ValueError, json.JSONDecodeError, UnicodeDecodeError, ValidationError) as exc:
                 message = str(exc) if isinstance(exc, ValueError) and str(exc) else "请检查填写内容后重试。"
                 self._json(400, {"error": message})
+            except autostart.AutostartError as exc:
+                self._json(400, {"error": str(exc)})
             except StoreError as exc:
                 self._json(400, {"error": str(exc)})
             except LLMError as exc:

@@ -428,90 +428,35 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     return 0
 
 
-AUTOSTART_LINK = "membrain-dashboard.lnk"  # written by earlier builds
-AUTOSTART_SCRIPT = "membrain-dashboard.vbs"
-
-
-def _startup_dir() -> Path:
-    return (Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows"
-            / "Start Menu" / "Programs" / "Startup")
-
-
 def cmd_install_autostart(args: argparse.Namespace) -> int:
-    """Start the dashboard at logon, so capture never waits for a manual launch.
+    """Start the dashboard at logon, in the background, without a browser.
 
-    The watcher only sees a conversation while the dashboard process is alive.
-    A night of work was lost because the service simply was not running; this
-    makes that the default rather than something the owner has to remember.
+    The watcher only sees a conversation while the dashboard process is alive,
+    so it has to come up with the machine. It must not steal the screen on the
+    way in: a launch that opens a browser tab every sign-in is the sort of
+    thing people turn off after a week.
 
-    The shortcut carries --restart so clicking it later replaces the running
-    instance with the current code instead of only opening a browser tab.
+    The shortcut targets a launcher script rather than a pythonw command line:
+    the shortcut's Arguments field is silently dropped, which used to leave an
+    interpreter running with nothing to execute.
     """
-    link = _startup_dir() / AUTOSTART_LINK
-    stray = _startup_dir() / AUTOSTART_SCRIPT
+    from . import autostart
+
+    try:
+        state = autostart.disable() if args.remove else autostart.enable()
+    except autostart.AutostartError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     if args.remove:
-        removed = []
-        for path in (link, stray):
-            if path.exists():
-                path.unlink()
-                removed.append(path.name)
-        print(f"removed {', '.join(removed)}" if removed else "autostart entry was not installed")
+        print("removed the autostart entry" if not state["enabled"] else "autostart entry is still present")
         return 0
-    if os.name != "nt":
+    print(f"installed {state['link']}")
+    if not state["supported"]:
         print("Non-Windows: add this line to your desktop autostart or crontab @reboot:")
         print(f"  {sys.executable} -m membrain.cli dashboard --no-open")
         return 0
-
-    import base64
-    import subprocess
-
-    from .config import REPO_ROOT
-
-    pythonw = REPO_ROOT / ".venv" / "Scripts" / "pythonw.exe"
-    if not pythonw.exists():
-        pythonw = Path(sys.executable)
-    # Aim at the launcher script rather than at pythonw with arguments: the
-    # shortcut repeatedly dropped its Arguments field, leaving a target that
-    # started an interpreter with nothing to run. A .vbs target needs none, and
-    # the script itself carries the proxy reset and --restart.
-    launcher = REPO_ROOT / "start-dashboard.vbs"
-    use_launcher = launcher.exists()
-    target = launcher if use_launcher else pythonw
-    arguments = "" if use_launcher else "-m membrain.cli dashboard --port 1966 --restart"
-
-    def ps_quote(value: str) -> str:
-        return "'" + value.replace("'", "''") + "'"
-
-    script = "\n".join([
-        "[Console]::OutputEncoding = [Text.Encoding]::UTF8",
-        "$startup = [Environment]::GetFolderPath('Startup')",
-        f"$link = Join-Path $startup {ps_quote(AUTOSTART_LINK)}",
-        "$shell = New-Object -ComObject WScript.Shell",
-        "$shortcut = $shell.CreateShortcut($link)",
-        f"$shortcut.TargetPath = {ps_quote(str(target))}",
-        f"$shortcut.Arguments = {ps_quote(arguments)}",
-        f"$shortcut.WorkingDirectory = {ps_quote(str(REPO_ROOT))}",
-        "$shortcut.Description = 'membrain memory dashboard (auto-start)'",
-        "$shortcut.Save()",
-        "Write-Output $link",
-    ])
-    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
-    shell = "powershell"
-    result = subprocess.run(
-        [shell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
-        capture_output=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    output = (result.stdout or result.stderr).decode("utf-8", "replace").strip()
-    if output:
-        print(output)
-    if result.returncode != 0:
-        print("autostart install failed; the dashboard still runs via `membrain dashboard`.")
-        return result.returncode
-    if stray.exists():
-        # One mechanism only: a script left over from an earlier attempt would
-        # race this shortcut at logon.
-        stray.unlink()
-    print("Done: the dashboard now starts with Windows and keeps capture alive.")
-    print("Remove it with: membrain install-autostart --remove")
+    print("Done: the dashboard now starts with Windows in the background (no browser).")
+    print("Turn it off from the settings page, or with: membrain install-autostart --remove")
     return 0
 
 

@@ -205,18 +205,21 @@ select { min-height: 34px; border: 1px solid var(--line); border-radius: 6px; ba
 .model-primary div span { overflow: hidden; max-width: 245px; color: var(--ink-soft); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .model-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: #c7d0cd; box-shadow: 0 0 0 4px rgba(199,208,205,.2); }
 .model-dot.is-online { background: #57c6a6; box-shadow: 0 0 0 4px rgba(87,198,166,.13); }
-.model-details { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 18px 0; }
+.model-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 12px 18px; margin: 16px 0 0; }
 .model-details div { min-width: 0; }
 .model-details dt { margin-bottom: 3px; color: #899693; font-size: 10px; }
 .model-details dd { overflow: hidden; margin: 0; color: var(--ink); font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.model-test-button { width: 100%; }
+.model-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 16px; }
+.model-actions .button { min-height: 34px; }
 .model-result { min-height: 18px; margin: 10px 0 0; color: var(--ink-soft); font-size: 11px; line-height: 1.5; }
 .model-hint { margin: 2px 0 0; color: #899693; font-size: 10px; line-height: 1.6; }
 .model-hint code { padding: 1px 4px; border-radius: 4px; background: var(--line); color: var(--ink-soft); font-size: 10px; }
 .model-config { margin-top: 15px; border-top: 1px solid var(--line); padding-top: 13px; }
 .model-config summary { cursor: pointer; color: var(--teal); font-size: 11px; font-weight: 750; }
 .model-config form { display: grid; gap: 10px; padding-top: 12px; }
-.config-grid { display: grid; grid-template-columns: minmax(0, 1fr) 92px; gap: 9px; }
+.config-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; }
+.config-field-wide { grid-column: 1 / -1; }
+.config-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
 .config-field { display: grid; gap: 5px; min-width: 0; }
 .config-field span { color: var(--ink-soft); font-size: 10px; font-weight: 700; }
 .config-field small { color: #899693; font-size: 9px; font-weight: 500; }
@@ -224,7 +227,7 @@ select { min-height: 34px; border: 1px solid var(--line); border-radius: 6px; ba
 .config-field input:focus, .config-field select:focus { border-color: var(--teal); outline: 0; box-shadow: 0 0 0 3px rgba(24,142,136,.1); }
 .config-clear { display: flex; align-items: center; gap: 7px; color: var(--ink-soft); font-size: 10px; }
 .config-clear input { accent-color: var(--teal); }
-.config-submit { width: 100%; min-height: 34px; }
+.config-submit { width: auto; min-width: 136px; min-height: 34px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 
 .is-hidden { display: none !important; }
@@ -393,7 +396,33 @@ dialog::backdrop { background: rgba(19, 38, 39, .38); }
 .view.is-active { display: block; }
 .nav-group + .nav-group { margin-top: 14px; }
 .nav-group-title { padding: 0 12px 6px; font-size: 11px; letter-spacing: .08em; color: #94a3b8; }
-.view .model-panel { max-width: 720px; }
+/* 模型与启动设置：卡片按两列铺开，主卡片横跨整行（2026-11-07） */
+.view .model-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+.view .model-grid > .model-panel { max-width: none; }
+.model-panel-wide { grid-column: 1 / -1; }
+.model-top { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(280px, .7fr); gap: 18px 24px; align-items: start; }
+.model-top .model-result { margin-top: 10px; }
+@media (max-width: 860px) {
+  .view .model-grid { grid-template-columns: minmax(0, 1fr); }
+  .model-top { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* 开机自启动开关 */
+.service-row { display: flex; align-items: center; justify-content: space-between; gap: 26px; }
+.service-copy { min-width: 0; max-width: 660px; }
+.service-copy strong { display: block; margin-bottom: 6px; color: var(--ink); font-size: 13px; }
+.service-copy p { margin: 0 0 6px; color: var(--ink-soft); font-size: 11.5px; line-height: 1.7; }
+.service-copy code { padding: 1px 4px; border-radius: 4px; background: var(--line); color: var(--ink-soft); font-size: 10.5px; white-space: nowrap; }
+.switch { flex: none; width: 46px; height: 26px; border: 1px solid #cfd8d4; border-radius: 999px; background: #e6ebe8; padding: 3px; cursor: pointer; transition: background .16s ease, border-color .16s ease; }
+.switch-thumb { display: block; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(15,23,42,.22); transition: transform .18s ease; }
+.switch[aria-checked="true"] { border-color: var(--teal); background: var(--teal); }
+.switch[aria-checked="true"] .switch-thumb { transform: translateX(20px); }
+.switch:focus-visible { outline: 2px solid var(--teal); outline-offset: 3px; }
+.switch:disabled { opacity: .55; cursor: wait; }
+@media (max-width: 620px) {
+  .config-grid { grid-template-columns: minmax(0, 1fr); }
+  .service-row { align-items: flex-start; }
+}
 
 /* 统计卡即入口（2026-11-03） */
 .stat-card[data-goto] { cursor: pointer; transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease; }
