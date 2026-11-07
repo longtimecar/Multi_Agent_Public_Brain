@@ -222,7 +222,19 @@ function renderAutostart(data) {
 
 async function loadAutostart() {
   try { renderAutostart(await fetchJson('/api/autostart')); }
-  catch { /* 自启状态读不到不影响其他设置 */ }
+  catch {
+    // 页面本身是磁盘上的静态文件，后台却要重启才带上新接口。与其一直显示
+    // "读取中"、让人反复点一个会 404 的开关，不如说清楚现在差一次重启。
+    const toggle = $('#autostart-toggle');
+    const badge = $('#autostart-badge');
+    const detail = $('#autostart-detail');
+    if (!toggle || !badge || !detail) return;
+    toggle.disabled = true;
+    toggle.setAttribute('aria-checked', 'false');
+    badge.className = 'status-badge status-contested';
+    badge.textContent = '待重启';
+    detail.textContent = '后台还停在旧代码上：重启一次服务后，这个开关才会生效。';
+  }
 }
 
 async function toggleAutostart() {
