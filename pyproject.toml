@@ -53,6 +53,7 @@ include = [
     "/.env.example",
     "/.mcp.json.example",
     "/.gitignore",
+    "/install.ps1",
     "/pyproject.toml",
 ]
 exclude = [

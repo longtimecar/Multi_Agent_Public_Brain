@@ -450,7 +450,7 @@
             </section>
 
             <section class="panel model-panel model-panel-wide" id="service">
-              <div class="panel-header"><div><h2>服务与启动</h2><p class="panel-subtitle">登录 Windows 后自动在后台运行，不打开浏览器</p></div><span class="status-badge status-superseded" id="autostart-badge">读取中</span></div>
+              <div class="panel-header"><div><h2>服务与启动</h2><p class="panel-subtitle">Windows 桌面快捷方式与可选的后台开机自启动（默认关闭）</p></div><span class="status-badge status-superseded" id="autostart-badge">读取中</span></div>
               <div class="model-body">
                 <div class="service-row">
                   <div class="service-copy">
@@ -461,6 +461,15 @@
                   <button class="switch" id="autostart-toggle" type="button" role="switch" aria-checked="false" aria-label="开机自启动"><span class="switch-thumb"></span></button>
                 </div>
                 <p class="model-result" id="autostart-result"></p>
+                <div class="service-row service-row-divider">
+                  <div class="service-copy">
+                    <strong>桌面快捷方式</strong>
+                    <p>在桌面创建「membrain 记忆后台.lnk」，双击无黑框启动并在浏览器打开控制台；若后台已运行则直接切回页面。</p>
+                    <p class="model-hint" id="shortcut-detail">仅 Windows 支持；首次安装或移动仓库位置后可随时点击生成。</p>
+                  </div>
+                  <button class="button button-outline" id="shortcut-create-button" type="button">创建桌面快捷方式</button>
+                </div>
+                <p class="model-result" id="shortcut-result"></p>
               </div>
             </section>
           </div>

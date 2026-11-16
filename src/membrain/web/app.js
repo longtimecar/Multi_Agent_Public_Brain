@@ -199,24 +199,33 @@ function renderAutostart(data) {
   const toggle = $('#autostart-toggle');
   const badge = $('#autostart-badge');
   const detail = $('#autostart-detail');
+  const shortcutButton = $('#shortcut-create-button');
+  const shortcutDetail = $('#shortcut-detail');
   if (!toggle || !badge || !detail) return;
   const supported = Boolean(data.supported);
   toggle.disabled = !supported;
   toggle.setAttribute('aria-checked', data.enabled ? 'true' : 'false');
+  if (shortcutButton) shortcutButton.disabled = !supported;
   if (!supported) {
     badge.className = 'status-badge status-superseded';
     badge.textContent = '不支持';
     detail.textContent = '当前系统不是 Windows：需要自行配置开机启动。';
+    if (shortcutDetail) {
+      shortcutDetail.textContent = '当前系统不是 Windows：桌面 .lnk 快捷方式仅支持 Windows。';
+    }
     return;
+  }
+  if (shortcutDetail) {
+    shortcutDetail.textContent = '可在桌面创建或更新「membrain 记忆后台.lnk」（默认不开启开机自启动）。';
   }
   badge.className = `status-badge ${data.enabled ? 'status-active' : 'status-superseded'}`;
   badge.textContent = data.enabled ? (data.silent ? '已开启' : '已开启 · 会弹浏览器') : '未开启';
   if (data.enabled && data.silent) {
-    detail.textContent = `已开启（端口 ${data.port}）。想打开界面时双击 start-dashboard.vbs。`;
+    detail.textContent = `已开启（端口 ${data.port}）。想打开界面时双击桌面快捷方式或 start-dashboard.vbs。`;
   } else if (data.enabled) {
     detail.textContent = '已开启，但指向会打开浏览器的启动脚本；关掉再开一次就能改成静默启动。';
   } else {
-    detail.textContent = '未开启：登录后需要手动启动，期间的新对话不会被捕获。';
+    detail.textContent = '未开启：默认关闭，仅在需要每次登录自动后台捕获时再手动打开。';
   }
 }
 
@@ -228,9 +237,11 @@ async function loadAutostart() {
     const toggle = $('#autostart-toggle');
     const badge = $('#autostart-badge');
     const detail = $('#autostart-detail');
+    const shortcutButton = $('#shortcut-create-button');
     if (!toggle || !badge || !detail) return;
     toggle.disabled = true;
     toggle.setAttribute('aria-checked', 'false');
+    if (shortcutButton) shortcutButton.disabled = true;
     badge.className = 'status-badge status-contested';
     badge.textContent = '待重启';
     detail.textContent = '后台还停在旧代码上：重启一次服务后，这个开关才会生效。';
@@ -254,6 +265,25 @@ async function toggleAutostart() {
     notify(error.message, true);
   }
   toggle.disabled = false;
+}
+
+async function createShortcut() {
+  const button = $('#shortcut-create-button');
+  const result = $('#shortcut-result');
+  if (!button || !result) return;
+  button.disabled = true;
+  result.textContent = '正在创建桌面快捷方式…';
+  try {
+    const data = await fetchJson('/api/shortcut', { method: 'POST', body: '{}' });
+    const targetPath = data.path || data.name || 'membrain 记忆后台.lnk';
+    result.textContent = `已创建桌面快捷方式：${targetPath}`;
+    notify('桌面快捷方式已创建');
+  } catch (error) {
+    result.textContent = error.message;
+    notify(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function renderRerank(data) {
@@ -1889,6 +1919,7 @@ function bind() {
   $('#agents-copy-all')?.addEventListener('click', copyAllPrompts);
   $('#agents-scan-button').addEventListener('click', loadAgents);
   $('#autostart-toggle')?.addEventListener('click', toggleAutostart);
+  $('#shortcut-create-button')?.addEventListener('click', createShortcut);
   $('#agents-show-all')?.addEventListener('change', (event) => {
     try { localStorage.setItem('membrain.agentShowAll', event.target.checked ? '1' : '0'); } catch { /* storage may be disabled */ }
     renderAgents(state.agents || []);

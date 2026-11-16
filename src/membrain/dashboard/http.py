@@ -564,6 +564,19 @@ def make_handler(runtime: DashboardRuntime):
             runtime._invalidate_health()
             return 200, result
 
+        def _post_shortcut(self, data: dict[str, Any]) -> tuple[int, Any]:
+            raw_port = data.get("port", autostart.PORT)
+            try:
+                port = int(raw_port)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("端口号必须是整数。") from exc
+            if not 1 <= port <= 65535:
+                raise ValueError("端口号须在 1 到 65535 之间。")
+            return 200, autostart.create_desktop_shortcut(
+                port=port,
+                no_open=bool(data.get("no_open", False)),
+            )
+
         def do_POST(self) -> None:
             path = urlparse(self.path).path
             try:
@@ -596,6 +609,7 @@ def make_handler(runtime: DashboardRuntime):
                     "/api/model/rerank/config": lambda d: (200, runtime.configure_rerank(d)),
                     "/api/model/rerank/test": lambda _d: (200, runtime.test_rerank()),
                     "/api/autostart": lambda d: (200, autostart.set_enabled(bool(d.get("enabled")))),
+                    "/api/shortcut": self._post_shortcut,
                     "/api/import/external": self._post_external_import,
                     "/api/import/sessions/start": self._post_sessions_import,
                     "/api/import/undo": self._post_import_undo,

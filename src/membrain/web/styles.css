@@ -409,6 +409,7 @@ dialog::backdrop { background: rgba(19, 38, 39, .38); }
 
 /* 开机自启动开关 */
 .service-row { display: flex; align-items: center; justify-content: space-between; gap: 26px; }
+.service-row-divider { margin-top: 16px; padding-top: 16px; border-top: 1px dashed var(--line, #e6e2da); }
 .service-copy { min-width: 0; max-width: 660px; }
 .service-copy strong { display: block; margin-bottom: 6px; color: var(--ink); font-size: 13px; }
 .service-copy p { margin: 0 0 6px; color: var(--ink-soft); font-size: 11.5px; line-height: 1.7; }

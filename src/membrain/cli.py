@@ -460,6 +460,22 @@ def cmd_install_autostart(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_shortcut(args: argparse.Namespace) -> int:
+    """Create a Windows desktop shortcut launching the dashboard without a console."""
+    from . import autostart
+
+    try:
+        result = autostart.create_desktop_shortcut(port=args.port, no_open=args.no_open)
+    except autostart.AutostartError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if getattr(args, "json", False):
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(f"created desktop shortcut: {result['path']}")
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     from .config import IN_CHECKOUT, REPO_ROOT
     from .embeddings import EmbeddingError
@@ -641,6 +657,12 @@ def main(argv: list[str] | None = None) -> int:
                                help="start the dashboard with Windows so capture keeps running")
     autostart.add_argument("--remove", action="store_true", help="remove the autostart entry")
     autostart.set_defaults(func=cmd_install_autostart)
+
+    sc = sub.add_parser("shortcut", help="create a Windows desktop shortcut for the dashboard")
+    sc.add_argument("--port", type=int, default=1966)
+    sc.add_argument("--no-open", action="store_true", help="start server without opening a browser tab")
+    sc.add_argument("--json", action="store_true", help="emit structured JSON output")
+    sc.set_defaults(func=cmd_shortcut)
 
     a = sub.add_parser("add", help="add a fact (constraints allowed here only)")
     a.add_argument("claim")
