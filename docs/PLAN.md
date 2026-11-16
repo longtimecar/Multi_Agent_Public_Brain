@@ -20,27 +20,42 @@ with a disposable memory directory before relying on it for important data.
 - **Session history import.** Claude Code, Codex, OpenCode, WorkBuddy, Cursor and
   DeepSeek Harness histories can be discovered and imported through a read-only
   adapter. Other sources can use live capture through MCP where supported.
-- **Archive library.** Imported conversations and notes are browsable as L0
-  summary, L1 source/category tree and L2 full text.
-- **Local dashboard.** Memory overview, search and correction, capture review,
-  session diffs, library import and model configuration on loopback only.
+- **External web AI import.** Copy-paste guided export prompt for ChatGPT,
+  Gemini, Claude, Kimi, Doubao, and DeepSeek with selectable `memory`
+  distillation or `rag` library ingestion and batch undo (`external_import.py`).
+- **Archive & RAG library.** Imported conversations and notes are browsable as L0
+  summary, L1 source/category tree and L2 full text, alongside uploaded documents
+  in `rag.py`.
+- **Reversible 4-tier conflict resolution.** Unambiguous non-constraint
+  contradictions follow deterministic precedence in `conflict.py` (`auto_resolve`
+  with full ledger undo in Dashboard / Admin Agent), while `constraint` facts and
+  exact ties stay `contested` for the owner.
+- **Modular local dashboard.** `src/membrain/dashboard/` package (split into
+  `runtime.py`, `admin_agent.py`, `http.py`) providing memory overview, search and
+  correction, capture review, session diffs, external/session import, health scan,
+  and model config on loopback only (guarded against DNS rebinding on GET and POST).
+- **Windows-first setup.** `install.ps1` one-click installer, `membrain shortcut`
+  (plus Dashboard Settings button) for windowless `.lnk` launch, and optional
+  silent logon autostart (off by default).
 - **Agent detection and connection.** Installed agents are detected per machine;
   safe config files can be connected from the dashboard and protected files get
   a copy-paste prompt instead.
-- **Optional OpenViking import.** Disabled until the owner sets
-  `MEMBRAIN_OPENVIKING_ROOT`; nothing is scanned from a built-in machine path.
+- **Quality evaluation harnesses.** `scripts/calibrate.py` (82 ZH/EN recall pairs)
+  and `scripts/eval_extraction.py` (`--fake` rule-guard baseline and live `.env`
+  evaluation over `tests/fixtures/extraction_eval.json`).
 
 ## Architecture boundaries
 
 1. **Add, never disable.** membrain is a shared layer. An agent's built-in memory
    remains active.
-2. **No silent authority.** MCP tools cannot create `constraint` facts, and
-   imported notes cannot grant standing permission.
+2. **No silent authority.** MCP tools, extractors, and external importers never
+   create `constraint` facts, and imported notes cannot grant standing permission.
 3. **Fail open.** One damaged source, model timeout or reranker failure must not
    stop capture or basic recall.
-4. **Local by default.** The dashboard binds to loopback and has no remote
-   account system.
-5. **No web-chat scraping.** Use official exports or local agent histories.
+4. **Local by default.** The dashboard binds to loopback only and rejects foreign
+   `Host` / `Origin` headers.
+5. **No web-chat scraping.** Use official exports, prompt-guided copy/paste backfill,
+   or local agent histories.
 
 ## Known limitations
 
@@ -49,83 +64,62 @@ with a disposable memory directory before relying on it for important data.
 - Cursor history comes from its local search index, so per-turn detail can be
   coarser than JSONL sources.
 - Model-based extraction can occasionally over-generalize. Review the library
-  and session diffs; use retract or batch undo when needed.
+  and session diffs; use retract, conflict undo, or batch undo when needed.
 - Semantic recall quality depends on the chosen embedding model. Recalibrate the
   floor after changing models.
 - Optional intent, rerank and evolution features remain off by default.
-- OpenViking is an optional legacy source, not the storage backend.
+- Windows `install.ps1` and desktop `.lnk` shortcut behavior are unit-tested on
+  Linux with mocks and queued for Windows CI / local PowerShell verification.
 
 ## Current work
 
-Done on 2026-11-05, after the owner reported that "记住现在的进度，明天继续"
-could not be asked back the next day. All four layers of that failure are
-closed, and `tests/test_temporal_recall.py` pins each one:
+Completed in earlier milestone (2026-11-05, pinned by `tests/test_temporal_recall.py`):
 
-1. **Time is real.** Session parsers keep each turn's own timestamp (per-turn
-   where the source has one, session-level otherwise); `Episode.ts_source`
-   records `exact` vs `estimated` and defaults to `estimated`, so a capture path
-   that forgets to declare accuracy cannot claim precision. Naive timestamps are
-   rejected. Episodes are filed under the operator's calendar day
-   (`MEMBRAIN_TZ`), which is what stops a one-day-wide "昨晚" window from
-   missing by a whole day in UTC+8.
-2. **Tasks are stored.** `FactType.TASK` is wired through the type tables, the
-   extraction prompt no longer says `Ignore tasks`, and durability is judged per
-   type: "would this matter at the start of the next session" for tasks,
-   "a month from now in an unrelated task" for everything else. The one-off-spec
-   gate now runs *after* the type is known, so a turn that is both a deliverable
-   spec and a handoff survives. Claims are written in the owner's language —
-   an English claim could not be found by a Chinese question.
+1. **Time is real.** Session parsers keep each turn's own timestamp (`exact` vs
+   `estimated`); episodes are filed under the operator's calendar day (`MEMBRAIN_TZ`).
+2. **Tasks are stored.** `FactType.TASK` is wired through extraction and durability
+   is judged per type; claims use the owner's language.
 3. **Ingestion standards agree across paths.** Extraction, MCP writes, session
-   import distillation and the dashboard admin loop were each applying a
-   different bar; session import was the strictest and explicitly dropped task
-   status. They now share the same per-type durability rule.
+   import distillation and the dashboard admin loop share the same per-type
+   durability rule.
 4. **Recall reads time and falls back.** `parse_time_window` resolves coarse
-   phrases deterministically (no model in the hot path). Out-of-window evidence
-   is demoted, never hard-filtered. Episodes have their own FTS index plus a CJK
-   term scan, because unicode61 treats a whole Chinese run as one token. When
-   curated facts cannot answer, raw turns are returned and labelled as such.
-   `membrain tasks` lists open tasks; `Fact.closed_at` plus a ledger `close`
-   event retires finished work, and an open task is never a forget candidate.
+   phrases deterministically; FTS + CJK bigram scans raw episodes when needed.
 5. **Capture does not need the dashboard.** `membrain watch` runs the loop in
    the foreground and `membrain autostart` installs it at login.
-6. **Session summaries.** `membrain consolidate` writes
-   `memory/summaries/*.md` (done / decided / open) with pointers back to its
-   episodes. Derived view only: never indexed as facts, never evidence.
+6. **Session summaries.** `membrain consolidate` writes `memory/summaries/*.md`
+   as a derived view only.
+7. **Pipeline resilience.** Fixed `agents._is_running` exact matching with
+   injectable process lists, Qoder path detection, extraction lock deferral,
+   newest-first bounded batch ordering, isolated operation failures with
+   capped retries, and ordered fragment citation recovery in `locate_quote`.
 
-Also fixed: `agents._is_running` matched process names by substring, so a
-running `deepseek harness.exe` reported the DeepSeek desktop app as installed —
-the same confusion the uninstall-list guard already handled. `scan` now takes an
-injectable process list, so those tests no longer depend on what the owner
-happens to have open.
+Completed in open-source & usability milestone (2026-11-16):
 
-Also fixed: `agents._is_running` matched process names by substring, so a
-running `deepseek harness.exe` reported the DeepSeek desktop app as installed;
-`scan` now takes an injectable process list, so those tests no longer depend on
-what the owner happens to have open.
-
-7. **The pipeline stalls were the real reason a day produced nothing.** Capture
-   was fine for Claude Code, Codex, WorkBuddy and the Harness, but Qoder read
-   the wrong directory entirely (`%APPDATA%/Qoder/User/workspaceStorage`) while
-   its transcripts live in `~/.qoder-cn/projects/*/*.jsonl`, so a live Qoder
-   conversation produced zero turns. Downstream, four separate faults each
-   stopped extraction: losing `extraction.lock` raised and killed the run
-   instead of skipping; sessions were walked in path order, so a September
-   conversation was examined before last night's handoff; one rejected
-   operation discarded every later operation in the same batch and left the
-   session unmarked, so it replayed and failed identically forever; and models
-   cite a long turn as "start…middle", which verbatim validation read as
-   fabrication. Evidence now requires every cited fragment to appear in order in
-   the user's own turn and records the longest of them as it really stands in
-   storage, retries are capped, and passes take the newest sessions first in a
-   bounded batch.
+1. Guarded dashboard GET/POST against DNS rebinding, pinned `mcp>=2`, added
+   `ubuntu-latest` + `windows-latest` CI matrix, removed unrelated skill &
+   legacy OpenViking import, and extracted shared `import_batches.py`.
+2. Added external AI export import (`external_import.py` supporting `memory` and
+   `rag` modes + batch undo) and 4-tier reversible conflict resolution (`conflict.py`,
+   `store.py`, dashboard Health UI, and admin agent tools).
+3. Split monolithic `dashboard.py` into `src/membrain/dashboard/{runtime,admin_agent,http}.py`.
+4. Added Windows `membrain shortcut`, Dashboard Settings desktop shortcut button,
+   and pure-ASCII `install.ps1` (autostart remains off by default).
+5. Added ZH/EN extraction quality dataset (`tests/fixtures/extraction_eval.json`),
+   evaluation runner (`scripts/eval_extraction.py`), and 1-week comparison guide.
 
 ## Next work
 
-- Add adapters for additional local agent histories where the format is stable.
-- Expand recall and extraction quality fixtures, especially multilingual cases.
-- Improve first-run guidance and empty-state onboarding.
-- Add deployment examples for common desktop environments.
-- Continue security review of local HTTP endpoints and path handling.
+1. **Windows acceptance & live `.env` baseline.** Run `.\install.ps1`, double-click
+   `membrain 记忆后台.lnk`, verify `windows-latest` CI, and run
+   `uv run python scripts/eval_extraction.py` against the owner's configured model.
+2. **One-week real-workflow evaluation.** Execute the three-way comparison protocol
+   in [TESTING.md](TESTING.md) (`AGENTS.md` vs `membrain` vs competitor) and
+   record concrete precision/recall and manual cleanup numbers.
+3. **Cross-agent coverage expansion.** Externalize `agents.py` registry specs so
+   community contributors can add new IDE/CLI adapters via JSON without code edits.
+4. **Unified profile & portable backup.** Add evidence-linked `profile.md` draft
+   generation (human-approved before write) and `membrain backup` / `restore` /
+   `verify` CLI commands with ledger integrity checks.
 
 ## Verification
 
@@ -134,6 +128,7 @@ Run the complete suite from the repository root:
 ```bash
 uv run pytest tests -q
 node --check src/membrain/web/app.js
+uv run python scripts/eval_extraction.py --fake
 ```
 
 For a disposable manual test, set `MEMBRAIN_HOME` to a new temporary directory,

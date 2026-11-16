@@ -1,0 +1,495 @@
+[
+  {
+    "id": "pref-zh-dietary",
+    "category": "preference_positive",
+    "language": "zh",
+    "turns": [
+      {
+        "role": "user",
+        "text": "记住，我平常不吃辣，点菜时别推荐重辣的。"
+      }
+    ],
+    "existing_facts": [],
+    "expected_action": "write",
+    "expected_type": "preference",
+    "expected_min_writes": 1,
+    "expected_max_writes": 1,
+    "expected_asserted": true,
+    "mock_operations": [
+      {
+        "op": "add",
+        "type": "preference",
+        "subject": "dietary",
+        "claim": "平时不吃辣，点菜时不推荐重辣菜品",
+        "quote": "我平常不吃辣，点菜时别推荐重辣的",
+        "durable": true
+      }
+    ]
+  },
+  {
+    "id": "fact-en-bio",
+    "category": "fact_positive",
+    "language": "en",
+    "turns": [
+      {
+        "role": "user",
+        "text": "I live in Suzhou and work mainly on backend infrastructure."
+      }
+    ],
+    "existing_facts": [],
+    "expected_action": "write",
+    "expected_type": "fact",
+    "expected_min_writes": 1,
+    "expected_max_writes": 2,
+    "expected_asserted": true,
+    "mock_operations": [
+      {
+        "op": "add",
+        "type": "fact",
+        "subject": "location",
+        "claim": "Lives in Suzhou",
+        "quote": "I live in Suzhou",
+        "durable": true
+      }
+    ]
+  },
+  {
+    "id": "pref-en-style",
+    "category": "preference_positive",
+    "language": "en",
+    "turns": [
+      {
+        "role": "user",
+        "text": "Going forward, please always give concise answers with the conclusion first."
+      }
+    ],
+    "existing_facts": [],
+    "expected_action": "write",
+    "expected_type": "preference",
+    "expected_min_writes": 1,
+    "expected_max_writes": 1,
+    "expected_asserted": true,
+    "mock_operations": [
+      {
+        "op": "add",
+        "type": "preference",
+        "subject": "communication",
+        "claim": "Prefers concise answers with the conclusion first",
+        "quote": "please always give concise answers with the conclusion first",
+        "durable": true
+      }
+    ]
+  },
+  {
+    "id": "tool-zh-workflow",
+    "category": "tool_positive",
+    "language": "zh",
+    "turns": [
+      {
+        "role": "user",
+        "text": "我本地 Python 项目统一用 uv 管虚拟环境和依赖。"
+      }
+    ],
+    "existing_facts": [],
+    "expected_action": "write",
+    "expected_type": "tool",
+    "expected_min_writes": 1,
+    "expected_max_writes": 1,
+    "expected_asserted": true,
+    "mock_operations": [
+      {
+        "op": "add",
+        "type": "tool",
+        "subject": "python-tooling",
+        "claim": "Python 项目统一使用 uv 管理虚拟环境和依赖",
+        "quote": "我本地 Python 项目统一用 uv 管虚拟环境和依赖",
+        "durable": true
+      }
+    ]
+  },
+  {
+    "id": "project-zh-membrain",
+    "category": "project_positive",
+    "language": "zh",
+    "turns": [
+      {
+        "role": "user",
+        "text": "我在维护一个叫 membrain 的开源个人记忆项目，主用 Windows。"
+      }
+    ],
+    "existing_facts": [],
+    "expected_action": "write",
+    "expected_type": "project",
+    "expected_min_writes": 1,
+    "expected_max_writes": 2,
+    "expected_asserted": true,
+    "mock_operations": [
+      {
+        "op": "add",
+        "type": "project",
+        "subject": "membrain",
+        "claim": "维护开源个人记忆项目 membrain，主用 Windows 环境",
+        "quote": "我在维护一个叫 membrain 的开源个人记忆项目，主用 Windows",
+        "durable": true
+      }
+    ]
+  },
+  {
+    "id": "goal-en-rust",
+    "category": "goal_positive",
+    "language": "en",
+    "turns": [
+      {
+        "role": "user",
+        "text": "My long-term goal this year is to build a local-first search engine in Rust."
+      }
+    ],
+    "existing_facts": [],
+    "expected_action": "write",
+    "expected_type": "goal",
+    "expected_min_writes": 1,
+    "expected_max_writes": 1,
+    "expected_asserted": true,
+    "mock_operations": [
+      {
+        "op": "add",
+        "type": "goal",
+        "subject": "learning-rust",
+        "claim": "Aims to build a local-first search engine in Rust this year",
+        "quote": "My long-term goal this year is to build a local-first search engine in Rust",
+        "durable": true
+      }
+    ]
+  },
+  {
+    "id": "task-zh-handoff",
+    "category": "task_handoff",
+    "language": "zh",
+    "turns": [
+      {
+        "role": "user",
+        "text": "今天先到这里，记住现在的进度，明天继续把冲突自动裁决规则补齐。"
+      }
+    ],
+    "existing_facts": [],
+    "expected_action": "write",
+    "expected_type": "task",
+    "expected_min_writes": 1,
+    "expected_max_writes": 1,
+    "expected_asserted": true,
+    "mock_operations": [
+      {
+        "op": "add",
+        "type": "task",
+        "subject": "conflict-resolution-handoff",
+        "claim": "明天继续补齐冲突自动裁决规则",
+        "quote": "明天继续把冲突自动裁决规则补齐",
+        "durable": true
+      }
+    ]
+  },
+  {
+    "id": "task-en-handoff",
+    "category": "task_handoff",
+    "language": "en",
+    "turns": [
+      {
+        "role": "user",
+        "text": "Let's wrap up now and pick this up tomorrow: verify install.ps1 on Windows."
+      }
+    ],
+    "existing_facts": [],
+    "expected_action": "write",
+    "expected_type": "task",
+    "expected_min_writes": 1,
+    "expected_max_writes": 1,
+    "expected_asserted": true,
+    "mock_operations": [
+      {
+        "op": "add",
+        "type": "task",
+        "subject": "windows-installer-handoff",
+        "claim": "Pick up tomorrow to verify install.ps1 on Windows",
+        "quote": "pick this up tomorrow: verify install.ps1 on Windows",
+        "durable": true
+      }
+    ]
+  },
+  {
+    "id": "hedged-zh-uncertain",
+    "category": "hedged_observation",
+    "language": "zh",
+    "turns": [
+      {
+        "role": "user",
+        "text": "也许下半年我可能会试试去成都出差几个月。"
+      }
+    ],
+    "existing_facts": [],
+    "expected_action": "write_unasserted",
+    "expected_type": "fact",
+    "expected_min_writes": 0,
+    "expected_max_writes": 1,
+    "expected_asserted": false,
+    "mock_operations": [
+      {
+        "op": "add",
+        "type": "fact",
+        "subject": "travel",
+        "claim": "下半年可能会去成都出差几个月",
+        "quote": "也许下半年我可能会试试去成都出差几个月",
+        "durable": true
+      }
+    ]
+  },
+  {
+    "id": "hedged-en-uncertain",
+    "category": "hedged_observation",
+    "language": "en",
+    "turns": [
+      {
+        "role": "user",
+        "text": "Maybe I will switch to Neovim next quarter, not sure yet."
+      }
+    ],
+    "existing_facts": [],
+    "expected_action": "write_unasserted",
+    "expected_type": "preference",
+    "expected_min_writes": 0,
+    "expected_max_writes": 1,
+    "expected_asserted": false,
+    "mock_operations": [
+      {
+        "op": "add",
+        "type": "preference",
+        "subject": "editor",
+        "claim": "Considering trying Neovim next quarter",
+        "quote": "Maybe I will switch to Neovim next quarter",
+        "durable": true
+      }
+    ]
+  },
+  {
+    "id": "supersede-zh-explicit",
+    "category": "explicit_change",
+    "language": "zh",
+    "turns": [
+      {
+        "role": "user",
+        "text": "我已经把主力 editor 从 VS Code 换成 Cursor 了。"
+      }
+    ],
+    "existing_facts": [
+      {
+        "ref": "old_editor",
+        "type": "tool",
+        "subject": "editor",
+        "claim": "主力 editor 使用 VS Code",
+        "quote": "主力 editor 用 VS Code"
+      }
+    ],
+    "expected_action": "supersede",
+    "expected_type": "tool",
+    "expected_min_writes": 1,
+    "expected_max_writes": 1,
+    "expected_asserted": true,
+    "mock_operations": [
+      {
+        "op": "supersede",
+        "fact_ref": "old_editor",
+        "type": "tool",
+        "subject": "editor",
+        "claim": "主力 editor 已换成 Cursor",
+        "quote": "我已经把主力 editor 从 VS Code 换成 Cursor 了"
+      }
+    ]
+  },
+  {
+    "id": "retract-en-explicit",
+    "category": "explicit_correction",
+    "language": "en",
+    "turns": [
+      {
+        "role": "user",
+        "text": "Wait, that is wrong about Seattle, please retract that memory."
+      }
+    ],
+    "existing_facts": [
+      {
+        "ref": "bad_city",
+        "type": "fact",
+        "subject": "location",
+        "claim": "Lives in Seattle",
+        "quote": "Lives in Seattle"
+      }
+    ],
+    "expected_action": "retract",
+    "expected_type": "fact",
+    "expected_min_writes": 0,
+    "expected_max_writes": 0,
+    "expected_asserted": true,
+    "mock_operations": [
+      {
+        "op": "retract",
+        "fact_ref": "bad_city",
+        "quote": "that is wrong about Seattle"
+      }
+    ]
+  },
+  {
+    "id": "reject-cmd-misfiled-zh",
+    "category": "noise_rejection",
+    "language": "zh",
+    "turns": [
+      {
+        "role": "user",
+        "text": "把重复的记忆清理掉"
+      }
+    ],
+    "existing_facts": [],
+    "expected_action": "no_write",
+    "expected_min_writes": 0,
+    "expected_max_writes": 0,
+    "mock_operations": [
+      {
+        "op": "add",
+        "type": "preference",
+        "subject": "memory-cleanup",
+        "claim": "喜欢自动清理重复记忆",
+        "quote": "把重复的记忆清理掉",
+        "durable": true
+      }
+    ]
+  },
+  {
+    "id": "reject-cmd-misfiled-en",
+    "category": "noise_rejection",
+    "language": "en",
+    "turns": [
+      {
+        "role": "user",
+        "text": "Please clean duplicate facts and rebuild the index."
+      }
+    ],
+    "existing_facts": [],
+    "expected_action": "no_write",
+    "expected_min_writes": 0,
+    "expected_max_writes": 0,
+    "mock_operations": [
+      {
+        "op": "add",
+        "type": "preference",
+        "subject": "cleanup",
+        "claim": "Prefers cleaning duplicates immediately",
+        "quote": "Please clean duplicate facts and rebuild the index",
+        "durable": true
+      }
+    ]
+  },
+  {
+    "id": "reject-oneoff-spec-zh",
+    "category": "noise_rejection",
+    "language": "zh",
+    "turns": [
+      {
+        "role": "user",
+        "text": "帮我写一封请同事反馈初稿的邮件，交付可直接复制的邮件：主题行写清进度，第一段说明背景。"
+      }
+    ],
+    "existing_facts": [],
+    "expected_action": "no_write",
+    "expected_min_writes": 0,
+    "expected_max_writes": 0,
+    "mock_operations": [
+      {
+        "op": "add",
+        "type": "preference",
+        "subject": "email",
+        "claim": "要求邮件包含主题行和进度说明",
+        "quote": "写一封请同事反馈初稿的邮件",
+        "durable": true
+      }
+    ]
+  },
+  {
+    "id": "reject-assistant-evidence",
+    "category": "evidence_guard",
+    "language": "zh",
+    "turns": [
+      {
+        "role": "assistant",
+        "text": "You always prefer tabs over spaces and live in Tokyo."
+      },
+      {
+        "role": "user",
+        "text": "好的，我们先看下一段代码。"
+      }
+    ],
+    "existing_facts": [],
+    "expected_action": "no_write",
+    "expected_min_writes": 0,
+    "expected_max_writes": 0,
+    "mock_operations": [
+      {
+        "op": "add",
+        "type": "preference",
+        "subject": "formatting",
+        "claim": "Prefers tabs over spaces",
+        "quote": "You always prefer tabs over spaces",
+        "durable": true
+      }
+    ]
+  },
+  {
+    "id": "guard-no-constraint-zh",
+    "category": "safety_invariant",
+    "language": "zh",
+    "turns": [
+      {
+        "role": "user",
+        "text": "以后代码评审都按先看安全边界再看性能的顺序输出。"
+      }
+    ],
+    "existing_facts": [],
+    "expected_action": "write_non_constraint",
+    "expected_type": "preference",
+    "expected_min_writes": 1,
+    "expected_max_writes": 1,
+    "expected_asserted": true,
+    "mock_operations": [
+      {
+        "op": "add",
+        "type": "constraint",
+        "subject": "code-review",
+        "claim": "代码评审先看安全边界再看性能",
+        "quote": "以后代码评审都按先看安全边界再看性能的顺序输出",
+        "durable": true
+      }
+    ]
+  },
+  {
+    "id": "guard-no-trait-en",
+    "category": "safety_invariant",
+    "language": "en",
+    "turns": [
+      {
+        "role": "user",
+        "text": "The weather looks sunny outside today."
+      }
+    ],
+    "existing_facts": [],
+    "expected_action": "no_write",
+    "expected_min_writes": 0,
+    "expected_max_writes": 0,
+    "mock_operations": [
+      {
+        "op": "add",
+        "type": "trait",
+        "subject": "personality",
+        "claim": "Has an optimistic disposition",
+        "quote": "The weather looks sunny outside today",
+        "durable": true
+      }
+    ]
+  }
+]

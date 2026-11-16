@@ -2,8 +2,7 @@
 
 The source of truth for what membrain is for and why it is built this way. It
 replaces the planning file from the first design conversation. Current status
-and next tasks are in [PLAN.md](PLAN.md). Parts marked *(MVP)* are designed but
-not built yet.
+and next tasks are in [PLAN.md](PLAN.md).
 
 ## Goal
 
@@ -31,11 +30,12 @@ plugins. OpenViking, Basic Memory and similar projects all work this way; none
 scrape web UIs.
 
 - Project-scoped automatic capture is implemented for Claude Code (transcript
-  hooks) and Codex (the top-level `UserPromptSubmit` hook). Both still require
-  live acceptance; Codex also requires the owner to review and trust the hooks.
-  Cursor, Gemini CLI and OpenCode adapters remain future work.
+  hooks) and Codex (the top-level `UserPromptSubmit` hook), plus background
+  local session store watching (`watcher.py`). Codex also requires the owner to
+  review and trust the hooks. Cursor, Gemini CLI and OpenCode adapters connect
+  via MCP/hooks in `harness/`.
 - Shared without auto-capture: any MCP client, through the MCP tools.
-- Not supported, on purpose: scraping ChatGPT, Claude or Gemini web apps, and HTTPS interception. Official data exports are the route for backfill.
+- Not supported, on purpose: scraping ChatGPT, Claude or Gemini web apps, and HTTPS interception. Official data exports and prompt-guided copy/paste external AI backfill (`external_import.py`) are the supported routes for history backfill.
 
 ## Architecture
 
@@ -43,26 +43,29 @@ scrape web UIs.
 |---|---|---|
 | Canonical | `memory/profile.md`, `memory/facts/*.md`, `memory/episodes/*.jsonl`, `memory/ledger.jsonl` | The product. Plain files. No git repo (owner's choice); history comes from immutable fact files and the append-only ledger. |
 | Index | `memory/.index/memory.db`: SQLite FTS5 plus float32 vectors | Derived. Delete it and `membrain reindex` rebuilds it. |
-| Access | MCP server `membrain-mcp`; hooks through `scripts/hook.py` | MCP is the portable floor; hooks make it automatic. |
+| Access | MCP server `membrain-mcp`; hooks through `scripts/hook.py`; browser dashboard (`dashboard/`) | MCP is the portable floor; hooks and watcher make capture automatic. |
 | Extraction | Background LLM pass over new episodes | Turns what the user said into facts. |
 
 ## Data model
 
-- **Fact**: one claim per file with YAML front-matter. Types: `constraint`, `fact`, `preference`, `goal`, `project`. There is no `trait` type, so inferred personality cannot be stored.
-- **Language**: claims are written in English (owner's choice). Quotes stay verbatim in whatever language the user typed.
-- **Evidence**: each fact carries one or more `{episode, quote, date, origin}`. The quote must be text the user actually typed.
-- **Ledger**: fact files are never edited after writing. `retract`, `contest`, `resolve`, `supersede`, `link` and `corroborate` are appended to `ledger.jsonl` and folded at read time.
+- **Fact**: one claim per file with YAML front-matter. Types: `constraint`, `fact`, `preference`, `goal`, `project`, `task`, `tool`, `entity`, `event`, `case`, `belief`. There is no `trait` type, so inferred personality cannot be stored.
+- **Language**: claims are written as short sentences in the owner's language used in the quoted turn (supporting Chinese and English). Quotes stay verbatim in whatever language the user typed.
+- **Evidence**: each fact carries one or more `{episode, quote, date, origin}`. The quote must be text the user actually typed (or explicitly approved external export chunks marked `origin="imported"`).
+- **Ledger**: fact files are never edited after writing. `retract`, `contest`, `resolve`, `supersede`, `auto_resolve`, `undo_auto_resolve`, `close`, `link` and `corroborate` are appended to `ledger.jsonl` and folded at read time.
 - **Episode**: one captured turn, user or assistant, appended to `episodes/YYYY-MM-DD.jsonl`. Stored raw, never interpreted at capture time.
-- **Confidence**: computed in `confidence.py` from evidence count, spread over time, stated vs inferred, and contested status. Never taken from a model. A plain first-person statement ("I'm allergic to peanuts") reaches 0.62 to 0.70 from one episode and is asserted. A statement containing a hedge ("maybe", "也许", "if") or inferred evidence stays under 0.40 until it recurs. Hedges are found by a fixed word list in `text.py`, and the extractor widens a quote to its clause so a dropped "也许" is not lost. A fact is asserted at 0.60. Changed 2026-11-01 at the owner's request; before that, one episode capped at 0.40 whatever it said.
+- **Confidence**: computed in `confidence.py` from evidence count, spread over time, stated vs inferred, and contested status. Never taken from a model. A plain first-person statement ("I'm allergic to peanuts") reaches 0.62 to 0.70 from one episode and is asserted. External `imported` memories use the owner-trusted explicit curve capped at 0.70 on import, and lose to direct local `stated` evidence under conflict Tier 1. A statement containing a hedge ("maybe", "也许", "if") or inferred evidence stays under 0.40 until it recurs. Hedges are found by a fixed word list in `text.py`, and the extractor widens a quote to its clause so a dropped "也许" is not lost. A fact is asserted at 0.60. Changed 2026-11-01 at the owner's request; before that, one episode capped at 0.40 whatever it said.
 
 ## Write path
 
-Archive tier (2026-11-01): long notes that are too long or task-specific to inject live in
-`memory/archive/` as immutable files with an L0 abstract in the front matter, an L1 overview
-computed per category, and the L2 body. They are found by `search_archive` and never injected
-automatically. Facts distilled from imported notes carry evidence origin `imported`: not the
-owner's typed text, so never accepted by the extractor or MCP writes as evidence, but trusted by
-the owner's choice and treated as explicit for confidence. Imports are reversible by batch.
+Archive tier & external AI import: long notes and imported session transcripts live in
+`memory/archive/` with an L0 abstract in front matter, an L1 overview per category,
+and the L2 body. They are found by `search_archive` / `rag.search` and never injected
+automatically. For external web AIs (ChatGPT, Gemini, Claude, Kimi, Doubao, DeepSeek, etc.),
+the dashboard offers a copyable export prompt (`external_import.py`) supporting two modes:
+`memory` distillation (tagged `origin="imported"`, never creating `constraint`, lower
+priority than local firm `stated`) and `rag` knowledge library ingestion (stored only as
+reference documents without polluting structured personal facts). All import batches are
+reversible via `ledger.jsonl`.
 
 0. Claude Code `UserPromptSubmit` records the typed prompt immediately, so an
    agent can cite it as evidence in the same reply. The later transcript pass
@@ -75,12 +78,12 @@ the owner's choice and treated as explicit for confidence. Imports are reversibl
    Missing or unfamiliar provenance is skipped. Neither capture path calls the
    model synchronously.
 2. A background extractor reads unprocessed user turns, retrieves similar existing facts, and asks the LLM for operations: `add`, `corroborate`, `supersede`, `retract`, `none`. Code validates each operation before writing.
-3. After each write, a mechanical conflict scan (`conflict.py`) marks contradictions `contested`.
+3. After each write, a mechanical conflict scan (`conflict.py`) evaluates contradictions with the 4-tier reversible rule (`auto_resolve` when unambiguous, undoable anytime via `undo_auto_resolve`), leaving constraints and exact ties `contested`.
 
 ## Read path
 
 - `SessionStart`: inject `profile.md`, constraints and confident goals, capped at 2,500 tokens.
-- `UserPromptSubmit`: hybrid retrieval (FTS5 plus vectors, combined by rank fusion), top 8, capped at 1,500 tokens (hard cap 2,000). Explicit requests for a memory or preference overview instead enumerate the relevant live category, newest first, subject to the same caps; this avoids requiring a broad question to resemble each individual fact. Low-confidence items are phrased as unconfirmed notes; contested ones are labelled. Items are dropped whole, never cut off. Matches with an available vector below the similarity floor are dropped, including lexical matches. When the embedding service or a fact's vector is unavailable, lexical fallback has no semantic guard. Overview recognition currently uses limited phrase patterns, not general intent understanding.
+- `UserPromptSubmit`: hybrid retrieval (FTS5 plus vectors, combined by rank fusion), top 8, capped at 1,500 tokens (hard cap 2,000). Explicit requests for a memory or preference overview instead enumerate the relevant live category, newest first, subject to the same caps; this avoids requiring a broad question to resemble each individual fact. Low-confidence items are phrased as unconfirmed notes; contested ones are labelled. Items are dropped whole, never cut off. Matches with an available vector below the similarity floor are dropped, including lexical matches. When the embedding service or a fact's vector is unavailable, lexical fallback has no semantic guard.
 - MCP `search_memory` for agents that want to look something up themselves.
 
 The budgets follow OpenViking's defaults (session-start block about 9,500 bytes,
@@ -93,8 +96,8 @@ over-retrieval degrades agents well before the context limit.
 |---|---|
 | What is worth remembering | Backend LLM, at write time |
 | Duplicate or new | Code selects embedding candidates; LLM compares their meaning |
-| Explicit change ("I've switched to X") | Backend LLM, recorded as `supersede` *(MVP)* |
-| Correction ("that memory is wrong") | Backend LLM watching the turn *(MVP)*, or the agent through `correct_memory` |
+| Explicit change ("I've switched to X") | Backend LLM, recorded as `supersede` |
+| Correction ("that memory is wrong") | Backend LLM watching the turn, or the agent through `correct_memory` |
 | Confidence | Code |
 | Detecting contradictions | Code, evaluated by the 4-tier reversible rule; ties & constraints stay `contested` |
 | Resolving contradictions | Code applies deterministic 4-tier `auto_resolve` when unambiguous (reversible via `undo_auto_resolve`); ties & `constraint` facts wait for the owner (`membrain resolve`) |
@@ -108,8 +111,8 @@ memory shows up in a conversation, by telling the active agent.
 
 Enforced by schema and code, not by asking the model to be careful:
 1. No trait type exists.
-2. No quote, no write. Quotes are checked against the user's own turn *(MVP)*.
-3. Only text the user typed counts as evidence. Assistant replies, tool output and injected memory blocks never do *(MVP: enforced in capture and extraction)*. This stops the system confirming itself.
+2. No quote, no write. Quotes are checked against the user's own turn (`locate_quote`).
+3. Only text the user typed counts as evidence. Assistant replies, tool output and injected memory blocks are stripped and never accepted as evidence. This stops the system confirming itself.
 4. Silence is never confirmation. An unchallenged hedge adds no evidence.
 5. Single observations are injected as unconfirmed notes, not as facts.
 6. A correction retracts permanently and outweighs any number of earlier mentions.
@@ -120,7 +123,8 @@ Enforced by schema and code, not by asking the model to be careful:
 Memory persists, so a poisoned entry would come back in every future session.
 - No MCP tool writes constraints.
 - Evidence comes only from user-typed text, so a web page or tool result cannot become a memory.
-- Injected memory is wrapped in `<memory>` or `<personal_memory>` tags, which capture strips *(MVP)*.
+- Injected memory is wrapped in `<memory>` or `<personal_memory>` tags, which capture strips (`text.clean_turn`).
+- Dashboard HTTP routes enforce loopback `Host` and same-origin `Origin` checks against DNS rebinding on both GET and POST.
 
 ## Models
 
