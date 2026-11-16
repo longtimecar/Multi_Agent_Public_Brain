@@ -96,8 +96,8 @@ over-retrieval degrades agents well before the context limit.
 | Explicit change ("I've switched to X") | Backend LLM, recorded as `supersede` *(MVP)* |
 | Correction ("that memory is wrong") | Backend LLM watching the turn *(MVP)*, or the agent through `correct_memory` |
 | Confidence | Code |
-| Detecting contradictions | Code, recorded as `contested` |
-| Resolving contradictions | The owner, with `membrain resolve`. Never automatic. |
+| Detecting contradictions | Code, evaluated by the 4-tier reversible rule; ties & constraints stay `contested` |
+| Resolving contradictions | Code applies deterministic 4-tier `auto_resolve` when unambiguous (reversible via `undo_auto_resolve`); ties & `constraint` facts wait for the owner (`membrain resolve`) |
 | Hard constraints | The owner only, through the CLI or `profile.md`. No MCP tool or extractor writes one. |
 
 The owner does not review entries one by one. Review at write time is the
@@ -113,7 +113,7 @@ Enforced by schema and code, not by asking the model to be careful:
 4. Silence is never confirmation. An unchallenged hedge adds no evidence.
 5. Single observations are injected as unconfirmed notes, not as facts.
 6. A correction retracts permanently and outweighs any number of earlier mentions.
-7. Conflicts are surfaced, never resolved automatically.
+7. `constraint` facts and exact-tie conflicts remain `contested` and are never resolved automatically; clear non-constraint contradictions follow the 4-tier reversible ledger rule (Tier 1: local firm `stated` > external `imported`/`inferred`; Tier 2: explicit change cue with date >= opponent; Tier 3: more independent evidence days/episodes; Tier 4: tie -> `contested`), undoable anytime via `undo_auto_resolve`.
 
 ## Prompt-injection safety
 

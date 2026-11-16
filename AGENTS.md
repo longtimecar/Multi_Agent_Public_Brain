@@ -11,7 +11,7 @@ the tasks in PLAN.md in order and update it as each one finishes.
 - No trait type and no personality inference.
 - Evidence is only text the user typed: never assistant replies, tool output or injected memory blocks.
 - Confidence is computed in `confidence.py`, never taken from a model.
-- Contradictions are marked contested and never resolved automatically.
+- Contradictions follow the 4-tier reversible ledger resolution rule; `constraint` facts and exact ties remain `contested` and are never resolved automatically.
 - No MCP tool or extractor writes a `constraint`.
 - Hooks always exit 0. A memory failure must never break the user's turn.
 - `memory/.index/` is disposable. Store nothing there that cannot be rebuilt.

@@ -265,7 +265,8 @@
 
         <div class="view" data-view-panel="library">
           <details class="import-fold" id="import-fold">
-            <summary><span>数据导入 · <strong id="import-fold-count">按需扫描</strong></span><span class="import-fold-hint">本机 Agent 会话与批次管理 · 展开管理</span></summary>
+            <summary><span>数据导入 · <strong id="import-fold-count">按需扫描</strong></span><span class="import-fold-hint">外部 AI 迁移、本机 Agent 会话与批次管理 · 展开管理</span></summary>
+            <div class="import-card" id="external-import-card"><div class="side-empty">正在加载外部 AI 导入…</div></div>
             <div class="import-card" id="session-import-card"><div class="side-empty">正在扫描本机 Agent 会话…</div></div>
             <div class="import-card" id="import-card"><div class="side-empty">正在读取导入批次…</div></div>
           </details>
@@ -346,12 +347,13 @@
         <div class="view" data-view-panel="health">
           <section class="panel health-panel" id="health">
             <div class="panel-header">
-              <div><h2>记忆健康</h2><p class="panel-subtitle">自动扫描重复、冲突、噪声与遗忘候选。只报告不擅改，处理由你决定。</p></div>
+              <div><h2>记忆健康</h2><p class="panel-subtitle">自动扫描重复、冲突、噪声与遗忘候选；平局与硬约束待你裁决，自动处理项可随时撤销。</p></div>
               <div class="overview-stat" id="health-score">—</div>
             </div>
             <div class="health-body">
               <div class="health-summary" id="health-summary">正在扫描…</div>
               <div class="health-findings" id="health-findings"></div>
+              <div class="health-auto-section is-hidden" id="health-auto-section"></div>
             </div>
           </section>
         </div>

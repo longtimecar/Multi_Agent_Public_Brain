@@ -939,14 +939,15 @@ def classify_with_cache(llm: Any, svc: Any, cache: dict[str, Any], chash: str,
 
 # Internal source key -> name shown in the dashboard. Keys without a spec
 # here are shown as-is; agents.py is the single place that knows the names.
+from .external_import import PLATFORM_LABELS
+
 SOURCE_LABELS: dict[str, str] = {}
 for _spec in agents.SPECS:
     SOURCE_LABELS[_spec.key] = _spec.name
+SOURCE_LABELS.update(PLATFORM_LABELS)
 SOURCE_LABELS.update({
     "dsh": "DeepSeek Harness",
     "claude-code": SOURCE_LABELS.get("claude-code", "Claude Code"),
-    "openviking": "OpenViking",
-    "openviking-import": "OpenViking 导入",
     "unknown-agent": "未知来源",
     "unknown": "未标记来源",
     "membrain-dashboard": "工作台录入",

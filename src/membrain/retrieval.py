@@ -779,19 +779,43 @@ class Retriever:
         return [f for f in self.store.all_facts() if f.status == Status.CONTESTED]
 
     def scan_conflicts(self) -> list:
-        """Detect contradictions across the live store and flag them.
+        """Detect contradictions across the live store and handle them safely.
 
-        Called after every write, so contradictions become visible on the turn
-        they appear instead of accumulating silently. Flagging is all it does;
-        resolution stays human.
+        Constraints and exact ties are flagged as `contested` for the owner.
+        Clear cases follow the 4-tier rule via reversible `auto_resolve` ledger
+        events. Returns the remaining contested conflicts needing human review.
         """
-        from .conflict import detect_conflicts
+        from .conflict import decide_conflict, detect_conflicts
 
         found = detect_conflicts(self.store.live_facts())
         if not found:
             return []
-        self.store.contest_pairs([(c.a.id, c.b.id, c.reason) for c in found])
-        for fact in self.store.all_facts():
-            if fact.id in {c.a.id for c in found} | {c.b.id for c in found}:
-                self.sync_fact(fact)
-        return found
+        retired_in_pass: set[str] = set()
+        contested: list = []
+        to_contest: list[tuple[str, str, str]] = []
+        touched: set[str] = set()
+        for conflict in found:
+            if conflict.a.id in retired_in_pass or conflict.b.id in retired_in_pass:
+                continue
+            decision = decide_conflict(conflict.a, conflict.b, conflict.reason)
+            if decision is not None:
+                self.store.auto_resolve(
+                    decision.keep_id,
+                    decision.drop_id,
+                    tier=decision.tier,
+                    reason=decision.reason,
+                    conflict_reason=decision.conflict_reason,
+                )
+                retired_in_pass.add(decision.drop_id)
+                touched.update((decision.keep_id, decision.drop_id))
+            else:
+                contested.append(conflict)
+                to_contest.append((conflict.a.id, conflict.b.id, conflict.reason))
+                touched.update((conflict.a.id, conflict.b.id))
+        if to_contest:
+            self.store.contest_pairs(to_contest)
+        if touched:
+            for fact in self.store.all_facts():
+                if fact.id in touched:
+                    self.sync_fact(fact)
+        return contested

@@ -1057,11 +1057,61 @@ const HEALTH_KINDS = {
   command_misfiled: ['指令误存为偏好', 'is-warn'],
 };
 
+function renderAutoResolutions(items) {
+  const section = $('#health-auto-section');
+  if (!section) return;
+  const rows = Array.isArray(items) ? items : [];
+  if (!rows.length) {
+    section.classList.add('is-hidden');
+    section.innerHTML = '';
+    return;
+  }
+  section.classList.remove('is-hidden');
+  section.innerHTML = `
+    <div class="health-auto-head">
+      <h3>已自动处理的新旧冲突（可随时撤销）</h3>
+      <span class="panel-meta">${rows.length} 条</span>
+    </div>
+    <div class="health-auto-list">
+      ${rows.map((item) => `
+        <article class="health-auto-item">
+          <div class="health-auto-claims">
+            <div><span class="agent-chip">第 ${Number(item.tier || 0)} 层规则</span> <span class="health-auto-meta">${escapeHtml(formatTime(item.ts))}</span></div>
+            <div><strong>保留：</strong>${escapeHtml(item.keep_claim || item.keep_id)}</div>
+            <div class="health-auto-meta"><strong>暂替代：</strong>${escapeHtml(item.drop_claim || item.drop_id)}</div>
+            <div class="health-auto-meta">依据：${escapeHtml(item.reason || '')}${item.conflict_reason ? `（${escapeHtml(item.conflict_reason)}）` : ''}</div>
+          </div>
+          <button class="button button-outline" type="button" data-undo-auto="${escapeHtml(item.resolution_id)}">撤销此判断</button>
+        </article>`).join('')}
+    </div>`;
+  section.querySelectorAll('[data-undo-auto]').forEach((button) =>
+    button.addEventListener('click', () => undoAutoResolution(button.dataset.undoAuto, button)));
+}
+
+async function undoAutoResolution(resolutionId, button) {
+  if (!window.confirm('撤销这条自动冲突判断？系统会将两条记忆同时标为「待裁决冲突」，交由你在冲突页手动决定。')) return;
+  button.disabled = true;
+  try {
+    await fetchJson('/api/conflicts/auto/undo', {
+      method: 'POST',
+      body: JSON.stringify({ resolution_id: resolutionId }),
+    });
+    notify('已撤销自动处理，两条记忆已恢复为待处理冲突');
+    await Promise.all([loadHealth(), loadData()]);
+  } catch (error) {
+    notify(error.message, true);
+    button.disabled = false;
+  }
+}
+
 async function loadHealth() {
   const grid = $('#health-findings');
   if (!grid) return;
   try {
-    const report = await fetchJson('/api/health');
+    const [report, autoRes] = await Promise.all([
+      fetchJson('/api/health'),
+      fetchJson('/api/conflicts/auto').catch(() => ({ items: [] })),
+    ]);
     $('#health-score').textContent = `${report.score} 分`;
     const counts = Object.entries(report.counts || {});
     $('#health-summary').textContent = counts.length
@@ -1069,28 +1119,29 @@ async function loadHealth() {
       : `一切正常，没有发现需要处理的问题。${report.dismissed ? `（已忽略 ${report.dismissed} 项）` : ''}`;
     if (!report.findings.length) {
       grid.innerHTML = '<div class="empty-state"><div class="empty-mark">H</div><h3>很健康</h3><p>没有重复、冲突或需要处理的问题。</p></div>';
-      return;
+    } else {
+      grid.innerHTML = report.findings.map((finding) => {
+        const [label, tone] = HEALTH_KINDS[finding.kind] || [finding.kind, ''];
+        const [a, b] = finding.fact_ids.length === 2 ? finding.fact_ids : [finding.fact_ids[0], ''];
+        const supersede = finding.kind === 'duplicate'
+          ? `<button class="button button-dark" type="button" data-health-supersede="${finding.fingerprint}" data-keep="${escapeHtml(a)}" data-drop="${escapeHtml(b)}">合并并替代</button>` : '';
+        const retract = (finding.kind === 'noisy' || finding.kind === 'forget'
+          || finding.kind === 'command_misfiled')
+          ? `<button class="button button-outline" type="button" data-health-retract="${finding.fingerprint}" data-drop="${escapeHtml(finding.fact_ids[0])}">撤回</button>` : '';
+        return `<article class="health-finding">
+          <div class="health-finding-head"><span class="agent-chip ${tone}">${label}</span><span class="health-fp">${finding.fact_ids.length} 条</span></div>
+          <p class="health-summary-line">${escapeHtml(finding.summary)}</p>
+          <p class="health-suggestion">${escapeHtml(finding.suggestion)}</p>
+          <div class="agent-actions">${supersede}${retract}
+            <button class="button button-outline" type="button" data-health-dismiss="${finding.fingerprint}">忽略</button>
+          </div>
+        </article>`;
+      }).join('');
+      $$('[data-health-supersede]').forEach((button) => button.addEventListener('click', () => healthAction('supersede', button)));
+      $$('[data-health-retract]').forEach((button) => button.addEventListener('click', () => healthAction('retract', button)));
+      $$('[data-health-dismiss]').forEach((button) => button.addEventListener('click', () => healthAction('dismiss', button)));
     }
-    grid.innerHTML = report.findings.map((finding) => {
-      const [label, tone] = HEALTH_KINDS[finding.kind] || [finding.kind, ''];
-      const [a, b] = finding.fact_ids.length === 2 ? finding.fact_ids : [finding.fact_ids[0], ''];
-      const supersede = finding.kind === 'duplicate'
-        ? `<button class="button button-dark" type="button" data-health-supersede="${finding.fingerprint}" data-keep="${escapeHtml(a)}" data-drop="${escapeHtml(b)}">合并并替代</button>` : '';
-      const retract = (finding.kind === 'noisy' || finding.kind === 'forget'
-        || finding.kind === 'command_misfiled')
-        ? `<button class="button button-outline" type="button" data-health-retract="${finding.fingerprint}" data-drop="${escapeHtml(finding.fact_ids[0])}">撤回</button>` : '';
-      return `<article class="health-finding">
-        <div class="health-finding-head"><span class="agent-chip ${tone}">${label}</span><span class="health-fp">${finding.fact_ids.length} 条</span></div>
-        <p class="health-summary-line">${escapeHtml(finding.summary)}</p>
-        <p class="health-suggestion">${escapeHtml(finding.suggestion)}</p>
-        <div class="agent-actions">${supersede}${retract}
-          <button class="button button-outline" type="button" data-health-dismiss="${finding.fingerprint}">忽略</button>
-        </div>
-      </article>`;
-    }).join('');
-    $$('[data-health-supersede]').forEach((button) => button.addEventListener('click', () => healthAction('supersede', button)));
-    $$('[data-health-retract]').forEach((button) => button.addEventListener('click', () => healthAction('retract', button)));
-    $$('[data-health-dismiss]').forEach((button) => button.addEventListener('click', () => healthAction('dismiss', button)));
+    renderAutoResolutions(autoRes?.items || []);
   } catch (error) {
     grid.innerHTML = `<div class="empty-state"><div class="empty-mark">H</div><h3>扫描失败</h3><p>${escapeHtml(error.message)}</p></div>`;
     notify(error.message, true);
@@ -1109,7 +1160,7 @@ async function healthAction(action, button) {
   try {
     const result = await fetchJson('/api/health/action', { method: 'POST', body: JSON.stringify(payload) });
     notify(result.note || (action === 'dismiss' ? '已忽略，下次扫描不再提示。' : '已处理。'));
-    await loadHealth();
+    await Promise.all([loadHealth(), loadData()]);
   } catch (error) { notify(error.message, true); button.disabled = false; }
 }
 
@@ -1165,8 +1216,119 @@ async function copyPrompt(key) {
   notify('提示词已复制，粘贴给该 Agent 即可');
 }
 
-const importStages = { preparing: '正在准备', cleaning: 'LLM 识别分类清洗中', indexing: '正在建立索引', distilling: '正在提炼短记忆' };
-state.lib = { labels: {}, sourceLabels: {}, treeCounts: {}, lastReport: null, poll: null, request: 0, importLoaded: false, importLoading: false, items: [], notes: [], selected: null, tree: { source: '', category: '' }, treeOpen: {} };
+const importStages = { preparing: '正在准备', archiving: '正在存档原文', cleaning: 'LLM 识别分类清洗中', indexing: '正在建立索引', distilling: '正在提炼短记忆' };
+state.lib = { labels: {}, sourceLabels: {}, treeCounts: {}, lastReport: null, poll: null, request: 0, importLoaded: false, importLoading: false, externalLoading: false, externalPrompt: null, externalPlatforms: null, items: [], notes: [], selected: null, tree: { source: '', category: '' }, treeOpen: {} };
+
+async function copyTextWithFallback(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const area = Object.assign(document.createElement('textarea'), { value: text });
+    document.body.append(area);
+    area.select();
+    document.execCommand('copy');
+    area.remove();
+  }
+}
+
+async function loadExternalImportCard() {
+  const card = $('#external-import-card');
+  if (!card || $('#external-import-text') || state.lib.externalLoading) return;
+  state.lib.externalLoading = true;
+  try {
+    const data = await fetchJson('/api/import/external/prompt');
+    state.lib.externalPrompt = data.prompt || '';
+    state.lib.externalPlatforms = data.platforms || { other: '其他 AI' };
+    if (data.platforms) {
+      state.lib.sourceLabels = { ...data.platforms, ...state.lib.sourceLabels };
+      state.sourceLabels = { ...data.platforms, ...state.sourceLabels };
+    }
+    const opts = Object.entries(state.lib.externalPlatforms)
+      .map(([k, label]) => `<option value="${escapeHtml(k)}">${escapeHtml(label)}</option>`)
+      .join('');
+    card.innerHTML = `
+      <h3>从其他 AI 导入记忆 / 资料</h3>
+      <p class="import-note">1. 复制下方提示词发给 ChatGPT / Claude / Gemini / Kimi / 豆包 等网页端 AI；2. 把它整理好的结果粘贴到下方，选择写入长期记忆或仅存为资料文档。</p>
+      <div class="external-import-form">
+        <div class="import-actions">
+          <button class="button button-outline" id="external-copy-prompt" type="button">复制导出提示词</button>
+          <span class="import-note">已包含中英双语指令，直接发给原 AI 即可</span>
+        </div>
+        <details>
+          <summary class="import-note">预览导出提示词</summary>
+          <pre class="external-prompt-preview">${escapeHtml(state.lib.externalPrompt)}</pre>
+        </details>
+        <div class="external-import-row">
+          <label class="external-import-field">来源平台
+            <select id="external-import-source">${opts}</select>
+          </label>
+          <label class="external-import-field">标题（可选）
+            <input id="external-import-title" type="text" maxlength="120" placeholder="例如：ChatGPT 长期记忆导出">
+          </label>
+        </div>
+        <label class="external-import-field">粘贴导出内容
+          <textarea class="external-import-textarea" id="external-import-text" placeholder="把另一个 AI 输出的记忆摘要或对话导出文本粘贴到这里…"></textarea>
+        </label>
+        <div class="external-import-mode">
+          <label class="external-import-radio"><input type="radio" name="external-import-mode" value="memory" checked> 导入为记忆（自动提炼并扫描冲突，可整批撤销）</label>
+          <label class="external-import-radio"><input type="radio" name="external-import-mode" value="rag"> 仅存为资料文档（放入 RAG 检索，不自动注入对话）</label>
+        </div>
+        <div class="import-actions">
+          <button class="button button-dark" id="external-import-submit" type="button">开始导入</button>
+          <span class="import-note" id="import-status"></span>
+        </div>
+      </div>`;
+    $('#external-copy-prompt')?.addEventListener('click', async () => {
+      await copyTextWithFallback(state.lib.externalPrompt || '');
+      notify('已复制导出提示词，发送给原 AI 后把输出粘贴回来即可');
+    });
+    $('#external-import-submit')?.addEventListener('click', submitExternalImport);
+  } catch (error) {
+    card.innerHTML = `<h3>从其他 AI 导入</h3><p class="import-note">${escapeHtml(error.message || '加载失败')}</p>`;
+  } finally {
+    state.lib.externalLoading = false;
+  }
+}
+
+async function submitExternalImport() {
+  const textEl = $('#external-import-text');
+  const titleEl = $('#external-import-title');
+  const sourceEl = $('#external-import-source');
+  const button = $('#external-import-submit');
+  const statusNode = $('#import-status');
+  const text = (textEl?.value || '').trim();
+  if (!text) {
+    notify('请先粘贴要导入的内容。', true);
+    textEl?.focus();
+    return;
+  }
+  const mode = document.querySelector('input[name="external-import-mode"]:checked')?.value || 'memory';
+  const source = sourceEl?.value || 'other';
+  const title = (titleEl?.value || '').trim();
+  if (button) button.disabled = true;
+  if (statusNode) statusNode.textContent = mode === 'rag' ? '正在存入 RAG 资料库…' : '正在提交后台导入…';
+  try {
+    const res = await fetchJson('/api/import/external', {
+      method: 'POST',
+      body: JSON.stringify({ mode, source, title, text }),
+    });
+    if (mode === 'rag') {
+      const chunks = res.document?.chunks ?? 0;
+      if (textEl) textEl.value = '';
+      if (titleEl) titleEl.value = '';
+      if (statusNode) statusNode.textContent = `已存入资料库（共 ${chunks} 段）`;
+      if (button) button.disabled = false;
+      notify(`已存入 RAG 资料库（共 ${chunks} 段）`);
+      await Promise.all([loadRag(), loadLibrary()]);
+      return;
+    }
+    pollImport('external');
+  } catch (error) {
+    notify(error.message, true);
+    if (statusNode) statusNode.textContent = error.message || '';
+    if (button) button.disabled = false;
+  }
+}
 
 function librarySourceLabel(source) {
   return state.lib.sourceLabels[source] || source || '未知来源';
@@ -1273,14 +1435,20 @@ async function startSessionImport(mode) {
 function renderImportCard(batches) {
   const card = $('#import-card');
   const report = state.lib.lastReport;
-  const done = report ? `<p class="import-note">刚完成：新放入资料库 ${report.archived_new} 篇，提炼出 ${report.facts_added} 条记忆${
-    report.errors?.length ? `，另有 ${report.errors.length} 篇处理遇到错误` : ''}。</p>` : '';
+  const conflictNote = (report && (report.conflicts_auto_resolved || report.conflicts_contested))
+    ? `；冲突扫描：自动处理 ${report.conflicts_auto_resolved || 0} 组（可在「记忆健康」撤销），待裁决 ${report.conflicts_contested || 0} 组`
+    : '';
+  const done = report ? `<p class="import-note">刚完成：新放入资料库 ${report.archived_new} 篇，提炼出 ${report.facts_added} 条记忆${conflictNote}${
+    report.errors?.length ? `，另有 ${report.errors.length} 项处理遇到错误` : ''}。</p>` : '';
   if (!batches?.length && !done) {
-    card.innerHTML = '<h3>导入批次记录</h3><p class="import-note">导入本机 Agent 会话后，这里会列出每一批导入记录，支持整批撤销。</p>';
+    card.innerHTML = '<h3>导入批次记录</h3><p class="import-note">通过外部 AI 导入或本机 Agent 会话导入后，这里会列出每一批导入记录，支持整批撤销。</p>';
     return;
   }
-  const rows = (batches || []).map((b) => `<div class="batch-row"><span>${escapeHtml(formatTime(b.created))}　资料 ${b.archived}　记忆 ${b.facts}${b.undone ? '　已撤销' : ''}</span>${
-    b.undone ? '' : `<button class="button button-outline" type="button" data-undo="${escapeHtml(b.batch)}">撤销这一批</button>`}</div>`).join('');
+  const rows = (batches || []).map((b) => {
+    const src = b.source ? `${escapeHtml(librarySourceLabel(b.source))} · ` : '';
+    return `<div class="batch-row"><span>${src}${escapeHtml(formatTime(b.created))}　资料 ${b.archived}　记忆 ${b.facts}${b.undone ? '　已撤销' : ''}</span>${
+      b.undone ? '' : `<button class="button button-outline" type="button" data-undo="${escapeHtml(b.batch)}">撤销这一批</button>`}</div>`;
+  }).join('');
   card.innerHTML = `<h3>导入批次记录</h3>${done}${rows}`;
   $$('[data-undo]').forEach((button) => button.addEventListener('click', () => undoImport(button.dataset.undo, button)));
 }
@@ -1290,6 +1458,7 @@ async function loadImport() {
   state.lib.importLoading = true;
   const foldCount = $('#import-fold-count');
   if (foldCount && !state.lib.importLoaded) foldCount.textContent = '正在扫描…';
+  loadExternalImportCard();
   const settled = await Promise.allSettled([
     fetchJson('/api/import/sessions/preview'), fetchJson('/api/import/batches')]);
   const [sessionResult, batchResult] = settled;
@@ -1297,6 +1466,10 @@ async function loadImport() {
   const batches = batchResult.status === 'fulfilled' ? batchResult.value : null;
   if (sessions) {
     state.lib.labels = sessions.labels || state.lib.labels;
+    if (sessions.source_labels) {
+      state.lib.sourceLabels = { ...sessions.source_labels, ...state.lib.sourceLabels };
+      state.sourceLabels = { ...sessions.source_labels, ...state.sourceLabels };
+    }
     renderSessionImport(sessions);
   } else {
     $('#session-import-card').innerHTML = `<h3>Agent 会话导入</h3><p class="import-note">${escapeHtml(sessionResult.reason?.message || '扫描失败')}</p>`;
@@ -1306,7 +1479,7 @@ async function loadImport() {
   if (foldCount && sessions) {
     foldCount.textContent = `会话 ${sessions.already_imported}/${sessions.total}（噪声 ${sessions.noise || 0}）`;
     const hint = $('#import-fold')?.querySelector('.import-fold-hint');
-    if (hint) hint.textContent = `自动发现 ${sessions.sources?.length || 0} 个会话源 · 展开管理`;
+    if (hint) hint.textContent = `外部 AI 迁移 · 自动发现 ${sessions.sources?.length || 0} 个会话源 · 展开管理`;
   } else if (foldCount) {
     foldCount.textContent = '扫描失败';
   }
@@ -1330,22 +1503,44 @@ function pollImport(kind = '') {
         pollImport(actualKind);
         return;
       }
-      if (job.status === 'done') { state.lib.lastReport = job.report; notify('导入完成'); }
-      else if (job.status === 'error') notify(`导入没有完成：${job.error}`, true);
-      await Promise.all([loadImport(), loadLibrary(), loadData()]);
-    } catch (error) { notify(error.message, true); }
+      const extBtn = $('#external-import-submit');
+      const sessBtn = $('#session-import-start');
+      if (extBtn) extBtn.disabled = false;
+      if (sessBtn) sessBtn.disabled = false;
+      if (job.status === 'done') {
+        state.lib.lastReport = job.report;
+        if (actualKind === 'external') {
+          if ($('#external-import-text')) $('#external-import-text').value = '';
+          if ($('#external-import-title')) $('#external-import-title').value = '';
+          if (statusNode) statusNode.textContent = `已完成（新增记忆 ${job.report?.facts_added ?? 0} 条）`;
+        } else if (statusNode) {
+          statusNode.textContent = '';
+        }
+        notify('导入完成');
+      } else if (job.status === 'error') {
+        if (statusNode) statusNode.textContent = job.error || '导入没有完成';
+        notify(`导入没有完成：${job.error}`, true);
+      }
+      const refreshes = [loadImport(), loadLibrary(), loadData()];
+      if ((job.report?.facts_added ?? 0) > 0 || actualKind === 'external') refreshes.push(loadHealth());
+      await Promise.all(refreshes);
+    } catch (error) {
+      if ($('#external-import-submit')) $('#external-import-submit').disabled = false;
+      if ($('#session-import-start')) $('#session-import-start').disabled = false;
+      notify(error.message, true);
+    }
   }, 1500);
 }
 
 
 async function undoImport(batch, button) {
-  if (!window.confirm('撤销这一批导入？资料库里这一批的内容会被隐藏，提炼出的偏好会被撤回，文件本身不会删除。')) return;
+  if (!window.confirm('撤销这一批导入？资料库里这一批的内容会被隐藏，提炼出的记忆会被撤回，文件本身不会删除。')) return;
   button.disabled = true;
   try {
     const result = await fetchJson('/api/import/undo', { method: 'POST', body: JSON.stringify({ batch }) });
-    notify(`已撤销：隐藏资料 ${result.archive_hidden} 篇，撤回偏好 ${result.facts_retracted} 条`);
+    notify(`已撤销：隐藏资料 ${result.archive_hidden} 篇，撤回记忆 ${result.facts_retracted} 条`);
     state.lib.lastReport = null;
-    await Promise.all([loadImport(), loadLibrary(), loadData()]);
+    await Promise.all([loadImport(), loadLibrary(), loadData(), loadHealth()]);
   } catch (error) { notify(error.message, true); button.disabled = false; }
 }
 
@@ -1393,7 +1588,7 @@ function renderLibraryList() {
   if (!rows.length) {
     list.innerHTML = state.lib.notes.length
       ? `<div class="side-empty">${escapeHtml(state.lib.notes.join('；'))}</div>`
-      : '<div class="empty-state library-empty"><div class="empty-mark">档</div><h3>资料库还是空的</h3><p>展开上方的“数据导入”，可以导入本机 Agent 历史会话，或配置可选的历史来源。</p></div>';
+      : '<div class="empty-state library-empty"><div class="empty-mark">档</div><h3>资料库还是空的</h3><p>展开上方的“数据导入”，可以从其他 AI 迁移记忆/资料，或导入本机 Agent 历史会话。</p></div>';
     return;
   }
   list.innerHTML = rows.map((item) => `<button type="button" class="library-item${state.lib.selected === item.id ? ' is-selected' : ''}" data-entry="${escapeHtml(item.id)}" aria-label="打开资料：${escapeHtml(item.title)}">
@@ -1675,7 +1870,7 @@ function switchView(name, opts = {}) {
   window.scrollTo(0, 0);
   loadData();
   if (panelName === 'diffs') loadDiffs();
-  if (panelName === 'library') { initRagUi(); loadRag(); loadLibrary(); }
+  if (panelName === 'library') { initRagUi(); loadExternalImportCard(); loadRag(); loadLibrary(); }
   if (panelName === 'agents') loadAgents();
   if (panelName === 'health') loadHealth();
   if (panelName === 'model') loadAutostart();
@@ -1684,7 +1879,7 @@ function switchView(name, opts = {}) {
 function refreshCurrentView() {
   loadData();
   if (state.currentView === 'diffs') loadDiffs();
-  if (state.currentView === 'library') { loadRag(); loadLibrary(); }
+  if (state.currentView === 'library') { loadExternalImportCard(); loadRag(); loadLibrary(); }
   if (state.currentView === 'agents') loadAgents();
   if (state.currentView === 'health') loadHealth();
 }

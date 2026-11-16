@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, unquote, urlparse, urlsplit
 
 from pydantic import ValidationError
 
-from . import agents, archive, autostart, health, import_batches, session_import
+from . import agents, archive, autostart, external_import, health, import_batches, session_import
 from . import agents as agent_names
 from .config import DEFAULT_ENV_FILE, IN_CHECKOUT, REPO_ROOT
 from .embeddings import Embedder, EmbeddingError
@@ -74,6 +74,10 @@ ADMIN_SYSTEM = (
     "(keeping the memory with more evidence). Use this instead of retracting item by item.\n"
     '{"action":"health_retract","args":{"memory_id":"...","reason":"..."}} retract one memory that the '
     "current health report names as misfiled (its evidence is an instruction, not a statement)\n"
+    '{"action":"import_batches"} list import batches and whether each batch was undone\n'
+    '{"action":"undo_import_batch","args":{"batch":"b_..."}} undo one import batch safely via the ledger\n'
+    '{"action":"auto_resolutions","args":{"include_undone":false}} list reversible automatic conflict decisions\n'
+    '{"action":"undo_auto_resolution","args":{"resolution_id":"ar_..."}} undo an automatic conflict decision and restore both facts to contested\n'
     '{"action":"rag_search","args":{"query":"..."}} search the knowledge library (uploaded documents)\n'
     '{"action":"rag_list"} list knowledge library documents\n'
     '{"action":"rag_read","args":{"id":"..."}} read one knowledge document and its chunks\n'
@@ -94,7 +98,8 @@ ADMIN_SYSTEM = (
     "- Duplicates: keep the memory with more evidence and the clearer claim, merge the other into it. "
     "Merging is safe — evidence is preserved and nothing is destroyed.\n"
     "- Conflicts: keep the newer explicit statement only when the evidence shows the owner actually changed "
-    "their mind; if the two are merely ambiguous, leave them and name the one that needs a human decision.\n"
+    "their mind; if the two are merely ambiguous, leave them and name the one that needs a human decision. "
+    "Use auto_resolutions / undo_auto_resolution when the owner asks about or wants to undo automatic conflict choices.\n"
     "- Noise or expired items: retract only when the finding names them and they are not constraints.\n"
     "- For 'command_misfiled' and 'duplicate', prefer one health_clean call over many single retracts: "
     "the policy is fixed and every action is reversible. Conflicts and noise still need your judgement "
@@ -111,7 +116,8 @@ ADMIN_MAX_TURNS = 12
 # One bad JSON answer is noise, not a reason to abandon the task.
 ADMIN_MAX_INVALID = 3
 ADMIN_WRITE_ACTIONS = {"correct", "retract", "record", "rag_delete",
-                       "health_merge", "health_dismiss", "health_retract", "health_clean", "health_resolve"}
+                       "health_merge", "health_dismiss", "health_retract", "health_clean", "health_resolve",
+                       "undo_import_batch", "undo_auto_resolution"}
 # Scanning embeds every live claim, so the dashboard caches the result instead of
 # recomputing a 20-second report on every visit.
 HEALTH_CACHE_SECONDS = 120.0
@@ -256,6 +262,58 @@ class DashboardRuntime:
 
         threading.Thread(target=run, name="membrain-dashboard-session-import", daemon=True).start()
         return self.import_job(), True
+
+    def start_external_import(self, *, text: str, source: str = "other",
+                              title: str = "") -> tuple[dict[str, Any], bool]:
+        """Validate pasted external AI text and distill durable memories in background."""
+        clean, src, final_title, _ = external_import.validate_inputs(text, source, title)
+        if isinstance(self.llm_client, LLMClient) and not self.llm_client.settings.llm_enabled:
+            raise LLMError("LLM 尚未配置，请先在「模型连接」配置模型后再导入为记忆。")
+        with self._import_lock:
+            if self._import_job.get("status") == "running":
+                if self._import_job.get("kind") != "external":
+                    raise ValueError("已有其他导入任务正在运行，请等待它完成。")
+                return dict(self._import_job), False
+            job_id = uuid.uuid4().hex
+            self._import_job = {
+                "id": job_id,
+                "kind": "external",
+                "status": "running",
+                "progress": {"stage": "preparing"},
+            }
+
+        def update(**fields: Any) -> None:
+            with self._import_lock:
+                if self._import_job.get("id") == job_id:
+                    self._import_job = {**self._import_job, **fields}
+
+        def run() -> None:
+            try:
+                report = external_import.import_as_memories(
+                    self.service,
+                    self.llm_client,
+                    text=clean,
+                    source=src,
+                    title=final_title,
+                    progress=lambda p: update(progress=p),
+                )
+                self._invalidate_health()
+                update(status="done", report=report, progress=None)
+            except Exception as exc:  # the page shows a recoverable message
+                update(status="error", error=str(exc) or exc.__class__.__name__, progress=None)
+
+        threading.Thread(target=run, name="membrain-dashboard-external-import", daemon=True).start()
+        return self.import_job(), True
+
+    def list_auto_resolutions(self, include_undone: bool = False) -> dict[str, Any]:
+        return {"items": self.service.store.list_auto_resolutions(include_undone=include_undone)}
+
+    def undo_auto_resolution(self, resolution_id: str) -> dict[str, Any]:
+        result = self.service.store.undo_auto_resolve(resolution_id)
+        for fid in (result["keep_id"], result["drop_id"]):
+            self.service.retriever.sync_fact(self.service.store.get_fact(fid))
+        self._invalidate_health()
+        return result
 
     @staticmethod
     def _endpoint(base_url: str | None) -> str:
@@ -901,6 +959,31 @@ class DashboardRuntime:
             ok = self.rag_delete({"id": doc_id}).get("ok")
             self._invalidate_health()
             return bool(ok), {"action": "rag_delete", "id": doc_id, "deleted": bool(ok)}
+        if action == "import_batches":
+            return True, {"action": "import_batches", "batches": import_batches.list_batches(self.service)}
+        if action == "undo_import_batch":
+            batch = str(args.get("batch") or args.get("batch_id") or "").strip()
+            if not batch:
+                return False, {"error": "undo_import_batch 需要 batch。"}
+            try:
+                res = import_batches.undo_batch(self.service, batch)
+            except StoreError as exc:
+                return False, {"error": str(exc)}
+            self._invalidate_health()
+            return True, {"action": "undo_import_batch", "batch": batch, **res}
+        if action == "auto_resolutions":
+            inc = bool(args.get("include_undone", False))
+            items = self.list_auto_resolutions(include_undone=inc)["items"]
+            return True, {"action": "auto_resolutions", "items": items}
+        if action == "undo_auto_resolution":
+            rid = str(args.get("resolution_id") or args.get("id") or "").strip()
+            if not rid:
+                return False, {"error": "undo_auto_resolution 需要 resolution_id。"}
+            try:
+                res = self.undo_auto_resolution(rid)
+            except StoreError as exc:
+                return False, {"error": str(exc)}
+            return True, {"action": "undo_auto_resolution", **res}
         return False, {"error": "未知动作。"}
 
     @staticmethod
@@ -932,6 +1015,10 @@ class DashboardRuntime:
                 parts.append("更正 1 条记忆")
             elif action == "retract":
                 parts.append("撤回 1 条记忆")
+            elif action == "undo_import_batch":
+                parts.append(f"撤销导入批次 {result.get('batch', '')}")
+            elif action == "undo_auto_resolution":
+                parts.append("撤销 1 条冲突自动处理")
         summary = "、".join(dict.fromkeys(parts)) or "执行了部分操作"
         return f"已完成：{summary}。最后一步模型输出格式出错，剩下的可以再发一次。"
 
@@ -1639,10 +1726,19 @@ def make_handler(runtime: DashboardRuntime):
                     ], "count": len(tasks)})
                 elif parsed.path == "/api/import/sessions/preview":
                     self._json(200, runtime.session_import_preview())
+                elif parsed.path == "/api/import/external/prompt":
+                    self._json(200, {
+                        "prompt": external_import.EXPORT_PROMPT,
+                        "platforms": external_import.PLATFORM_LABELS,
+                    })
                 elif parsed.path == "/api/import/job":
                     self._json(200, runtime.import_job())
                 elif parsed.path == "/api/import/batches":
                     self._json(200, {"batches": import_batches.list_batches(runtime.service)})
+                elif parsed.path == "/api/conflicts/auto":
+                    q_params = parse_qs(parsed.query)
+                    inc = (q_params.get("include_undone") or ["0"])[0].lower() in {"1", "true", "yes"}
+                    self._json(200, runtime.list_auto_resolutions(include_undone=inc))
                 elif parsed.path == "/api/rag/documents":
                     self._json(200, runtime.rag_list())
                 elif parsed.path == "/api/rag/search":
@@ -1695,7 +1791,12 @@ def make_handler(runtime: DashboardRuntime):
                 if self._foreign_request():
                     self._reject_foreign()
                     return
-                data = self._body(MAX_UPLOAD_BYTES if path == "/api/rag/upload" else MAX_BODY_BYTES)
+                max_bytes = (
+                    MAX_UPLOAD_BYTES if path == "/api/rag/upload"
+                    else max(MAX_BODY_BYTES, 1_500_000) if path == "/api/import/external"
+                    else MAX_BODY_BYTES
+                )
+                data = self._body(max_bytes)
                 service = runtime.service
                 if path == "/api/rag/upload":
                     self._json(201, runtime.rag_upload(data))
@@ -1734,6 +1835,9 @@ def make_handler(runtime: DashboardRuntime):
                     service.retriever.sync_fact(service.store.get_fact(drop))
                     self._json(200, {"ok": True, "keep": _fact_json(service.store.get_fact(keep)),
                                      "drop": _fact_json(service.store.get_fact(drop))})
+                elif path == "/api/conflicts/auto/undo":
+                    rid = str(data.get("resolution_id") or "")
+                    self._json(200, runtime.undo_auto_resolution(rid))
                 elif path == "/api/jobs/extract":
                     job, started = runtime.start_extract()
                     self._json(202 if started else 409, job)
@@ -1764,6 +1868,23 @@ def make_handler(runtime: DashboardRuntime):
                     self._json(200, runtime.test_rerank())
                 elif path == "/api/autostart":
                     self._json(200, autostart.set_enabled(bool(data.get("enabled"))))
+                elif path == "/api/import/external":
+                    mode = str(data.get("mode", "memory")).strip().lower() or "memory"
+                    text = data.get("text") if isinstance(data.get("text"), str) else ""
+                    source = str(data.get("source") or "other")
+                    title = str(data.get("title") or "")
+                    if mode == "rag":
+                        result = external_import.import_as_rag(
+                            service, text=text, source=source, title=title, llm=runtime.llm_client,
+                        )
+                        self._json(200, result)
+                    elif mode == "memory":
+                        job, started = runtime.start_external_import(
+                            text=text, source=source, title=title,
+                        )
+                        self._json(202 if started else 409, job)
+                    else:
+                        raise ValueError("导入模式只能是 memory 或 rag。")
                 elif path == "/api/import/sessions/start":
                     def _keys(name: str) -> list[str] | None:
                         value = data.get(name)
@@ -1784,7 +1905,9 @@ def make_handler(runtime: DashboardRuntime):
                             clear_skips=bool(data.get("clear_skips")))
                         self._json(202 if started else 409, job)
                 elif path == "/api/import/undo":
-                    self._json(200, import_batches.undo_batch(service, str(data.get("batch", ""))))
+                    result = import_batches.undo_batch(service, str(data.get("batch", "")))
+                    runtime._invalidate_health()
+                    self._json(200, result)
                 elif path.startswith("/api/agents/") and path.endswith("/connect"):
                     key = unquote(path.removeprefix("/api/agents/").removesuffix("/connect").strip("/"))
                     result = agents.connect(key, service.settings.home)

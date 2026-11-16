@@ -50,28 +50,49 @@ def norm_claim(text: str) -> str:
     return " ".join(text.casefold().split())
 
 
+def _match_quote_in_body(body: str, quote: str) -> str | None:
+    """Return verbatim substring matching `quote` (exact or whitespace-normalized)."""
+    if quote in body:
+        return quote
+    tokens = quote.split()
+    if not tokens:
+        return None
+    pattern = r"\s+".join(re.escape(tok) for tok in tokens)
+    found = re.search(pattern, body, re.S)
+    return found.group(0) if found else None
+
+
 def distill(llm: Any, entry: ArchiveEntry, system: str = DISTILL_SYSTEM,
-            *, allow_project_scope: bool = False) -> tuple[list[dict[str, str]], int]:
+            *, allow_project_scope: bool = False,
+            allowed_types: set[str] | frozenset[str] | None = None,
+            coerce_constraint: bool = False,
+            max_items: int = 8) -> tuple[list[dict[str, str]], int]:
     """Ask the model for facts, then keep only what code can verify. Returns (kept, rejected)."""
     response = llm.complete_json(system, f"Note title: {entry.title}\n\n{entry.body[:6000]}")
     raw = response.get("operations") or []  # a missing list means nothing qualified
     if not isinstance(raw, list):
         raise StoreError("distill response must contain operations")
+    valid_types = allowed_types if allowed_types is not None else DISTILL_TYPES
     kept: list[dict[str, str]] = []
     rejected = 0
-    for op in raw[:8]:
+    for op in raw[:max_items]:
         if not isinstance(op, dict):
             rejected += 1
             continue
-        kind, claim = str(op.get("type", "")).strip().lower(), str(op.get("claim", "")).strip()
-        quote, subject = str(op.get("quote", "")).strip(), str(op.get("subject", "")).strip() or "general"
+        kind = str(op.get("type", "")).strip().lower()
+        if coerce_constraint and kind == "constraint":
+            kind = "preference"
+        claim = str(op.get("claim", "")).strip()
+        quote = str(op.get("quote", "")).strip()
+        subject = str(op.get("subject", "")).strip() or "general"
         scope = str(op.get("scope", "owner")).strip().lower()
-        if (kind not in DISTILL_TYPES or not claim or len(claim) > 400 or not quote or len(quote) > 2000
+        matched_quote = _match_quote_in_body(entry.body, quote) if quote and len(quote) <= 2000 else None
+        if (kind not in valid_types or not claim or len(claim) > 400 or matched_quote is None
                 or (not allow_project_scope and scope == "project")
-                or quote not in entry.body or _AUTHORITY.search(claim + " " + quote)):
+                or _AUTHORITY.search(claim + " " + matched_quote)):
             rejected += 1
             continue
-        item = {"type": kind, "subject": subject[:120], "claim": claim, "quote": quote}
+        item = {"type": kind, "subject": subject[:120], "claim": claim, "quote": matched_quote}
         raw_date = str(op.get("date", "")).strip()
         if raw_date:
             item["date"] = raw_date
@@ -80,16 +101,25 @@ def distill(llm: Any, entry: ArchiveEntry, system: str = DISTILL_SYSTEM,
 
 
 def distill_with_retry(llm: Any, entry: ArchiveEntry, system: str = DISTILL_SYSTEM,
-                       *, allow_project_scope: bool = False) -> tuple[list[dict[str, str]], int]:
+                       *, allow_project_scope: bool = False,
+                       allowed_types: set[str] | frozenset[str] | None = None,
+                       coerce_constraint: bool = False,
+                       max_items: int = 8) -> tuple[list[dict[str, str]], int]:
     import time
 
     for wait in RATE_LIMIT_WAITS:
         try:
-            return distill(llm, entry, system=system, allow_project_scope=allow_project_scope)
+            return distill(
+                llm, entry, system=system, allow_project_scope=allow_project_scope,
+                allowed_types=allowed_types, coerce_constraint=coerce_constraint, max_items=max_items,
+            )
         except LLMError:
             if wait:
                 time.sleep(wait)
-    return distill(llm, entry, system=system, allow_project_scope=allow_project_scope)
+    return distill(
+        llm, entry, system=system, allow_project_scope=allow_project_scope,
+        allowed_types=allowed_types, coerce_constraint=coerce_constraint, max_items=max_items,
+    )
 
 
 def new_batch_id() -> str:

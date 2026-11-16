@@ -1,24 +1,14 @@
-"""Contradiction detection.
+"""Contradiction detection and deterministic 4-tier auto-resolution.
 
-Detection is deliberately mechanical and never resolves anything. It answers
-only "these two claims look like they are about the same thing and do not say
-the same thing" — a similarity question, safe for code. Deciding WHICH is true
-is a fact about the user that exists nowhere in the logs, so it stays with the
-human.
+Detection finds pairs among live active facts sharing a subject that look like
+contradictions. `constraint` facts are NEVER auto-resolved and always stay
+`contested` for the owner. Other pairs follow a strict, reversible 4-tier rule:
+  1. Owner's unhedged local `stated` statement beats external `imported`/`inferred` summary
+  2. Newer explicit change statement (unhedged, with change cue, date >= opponent)
+  3. More independent evidence: (firm_days, total_days, distinct_episodes)
+  4. Exact tie -> stay `CONTESTED` for human / health-scan review
 
-Signals, cheapest first:
-  1. antonym cue on the same subject   ("likes X" / "dislikes X")
-  2. one claim negated, the other not, same subject, overlapping content
-  3. same subject, near-identical phrasing, different value ("uses Rust"/"uses Python")
-
-Measurement notes, learned the hard way: plain Jaccard with raw tokens misses
-real conflicts. `does not eat spicy food` vs `eats spicy food` scores 0.33
-because "does" and "not" are noise and "eat"/"eats" do not match. So tokens are
-stemmed and stop-worded first, and overlap is measured by containment
-(|A∩B| / min|A|,|B|) rather than by union.
-
-Anything flagged gets `status: contested`, which both hedges it at retrieval and
-surfaces it in `list_contested`.
+Every auto-resolution writes reversible events to `ledger.jsonl`.
 """
 
 from __future__ import annotations
@@ -26,7 +16,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .models import Fact, Status
+from .models import Evidence, Fact, FactType, Status
+from .text import is_hedged
 
 NEGATION_CUES = (
     "not", "no", "never", "dont", "doesnt", "didnt", "cant", "cannot",
@@ -46,13 +37,19 @@ STOPWORDS |= frozenset(NEGATION_CUES)
 # Antonym pairs that flip the meaning of an otherwise-similar claim.
 ANTONYMS = (
     ("love", "hate"), ("like", "dislike"), ("prefer", "avoid"),
-    ("always", "never"), ("verbose", "terse"), ("short", "long"),
-    ("fast", "slow"), ("simple", "complex"), ("beginner", "expert"),
-    ("enabled", "disabled"), ("use", "avoid"), ("want", "refuse"),
+    ("always", "never"), ("verbose", "terse"), ("concise", "verbose"),
+    ("short", "long"), ("fast", "slow"), ("simple", "complex"),
+    ("beginner", "expert"), ("enabled", "disabled"), ("use", "avoid"),
+    ("want", "refuse"),
 )
 
 _WORD_RE = re.compile(r"[a-z0-9]+|[一-鿿]+", re.UNICODE)
 _CJK_NEG = ("不", "别", "勿", "没", "无")
+_EXPLICIT_CHANGE_RE = re.compile(
+    r"改用|改成|换成|不再|改为|从此|现在改|现在用|已经换|重新换|"
+    r"\b(?:switched|switching|changed|now i|no longer|instead of|moved to)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -60,6 +57,15 @@ class Conflict:
     a: Fact
     b: Fact
     reason: str
+
+
+@dataclass(frozen=True)
+class ConflictDecision:
+    keep_id: str
+    drop_id: str
+    tier: int
+    reason: str
+    conflict_reason: str = ""
 
 
 def _stem(word: str) -> str:
@@ -100,6 +106,111 @@ def _containment(a: str, b: str) -> float:
     if not ca or not cb:
         return 0.0
     return len(ca & cb) / min(len(ca), len(cb))
+
+
+def _firm_evidence(fact: Fact) -> list[Evidence]:
+    return [e for e in fact.evidence if e.origin in ("stated", "imported") and not is_hedged(e.quote)]
+
+
+def _has_firm_stated(fact: Fact) -> bool:
+    return any(e.origin == "stated" and not is_hedged(e.quote) for e in fact.evidence)
+
+
+def _all_external_or_inferred(fact: Fact) -> bool:
+    return bool(fact.evidence) and all(e.origin in ("imported", "inferred") for e in fact.evidence)
+
+
+def _has_explicit_change(fact: Fact) -> bool:
+    firm = _firm_evidence(fact)
+    if not firm:
+        return False
+    if _EXPLICIT_CHANGE_RE.search(fact.claim):
+        return True
+    return any(_EXPLICIT_CHANGE_RE.search(e.quote) for e in firm)
+
+
+def _latest_date(fact: Fact):
+    return max((e.date for e in fact.evidence), default=fact.valid_from)
+
+
+def _evidence_rank(fact: Fact) -> tuple[int, int, int]:
+    firm_days = len({e.date for e in _firm_evidence(fact)})
+    total_days = len({e.date for e in fact.evidence})
+    distinct_episodes = len({e.episode for e in fact.evidence})
+    return (firm_days, total_days, distinct_episodes)
+
+
+def decide_conflict(a: Fact, b: Fact, conflict_reason: str = "") -> ConflictDecision | None:
+    """Resolve a contradiction deterministically when safe, else return None (CONTESTED)."""
+    if FactType.CONSTRAINT in {a.type, b.type}:
+        return None
+
+    # Tier 1: owner's direct firm local statement beats external imported / inferred summary.
+    a_firm_stated = _has_firm_stated(a)
+    b_firm_stated = _has_firm_stated(b)
+    if a_firm_stated and _all_external_or_inferred(b):
+        return ConflictDecision(
+            keep_id=a.id,
+            drop_id=b.id,
+            tier=1,
+            reason="本地明确口述优先于外部导入或推断摘要",
+            conflict_reason=conflict_reason,
+        )
+    if b_firm_stated and _all_external_or_inferred(a):
+        return ConflictDecision(
+            keep_id=b.id,
+            drop_id=a.id,
+            tier=1,
+            reason="本地明确口述优先于外部导入或推断摘要",
+            conflict_reason=conflict_reason,
+        )
+
+    # Tier 2: explicit change cue ("改用/不再/switched...") with non-older evidence wins.
+    change_a = _has_explicit_change(a)
+    change_b = _has_explicit_change(b)
+    date_a = _latest_date(a)
+    date_b = _latest_date(b)
+    if change_a and not change_b and date_a >= date_b:
+        return ConflictDecision(
+            keep_id=a.id,
+            drop_id=b.id,
+            tier=2,
+            reason="含明确变更表述且不早于对方陈述",
+            conflict_reason=conflict_reason,
+        )
+    if change_b and not change_a and date_b >= date_a:
+        return ConflictDecision(
+            keep_id=b.id,
+            drop_id=a.id,
+            tier=2,
+            reason="含明确变更表述且不早于对方陈述",
+            conflict_reason=conflict_reason,
+        )
+    if change_a and change_b and date_a != date_b:
+        keep, drop = (a, b) if date_a > date_b else (b, a)
+        return ConflictDecision(
+            keep_id=keep.id,
+            drop_id=drop.id,
+            tier=2,
+            reason="双方均为明确变更，保留日期更新的一条",
+            conflict_reason=conflict_reason,
+        )
+
+    # Tier 3: more independent evidence wins: (firm_days, total_days, distinct_episodes).
+    rank_a = _evidence_rank(a)
+    rank_b = _evidence_rank(b)
+    if rank_a != rank_b:
+        keep, drop, kr, dr = (a, b, rank_a, rank_b) if rank_a > rank_b else (b, a, rank_b, rank_a)
+        return ConflictDecision(
+            keep_id=keep.id,
+            drop_id=drop.id,
+            tier=3,
+            reason=f"更多独立证据支持（{kr[0]}天/{kr[2]}条 vs {dr[0]}天/{dr[2]}条）",
+            conflict_reason=conflict_reason,
+        )
+
+    # Tier 4: exact tie stays contested for owner / health scan.
+    return None
 
 
 def detect_conflicts(
