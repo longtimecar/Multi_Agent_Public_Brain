@@ -439,8 +439,8 @@ def test_extract_rejects_task_without_handoff_wording(rig):
 
 
 def test_session_distill_whitelist_allows_task():
-    from membrain import openviking_import as ov
-    assert "task" in ov._TYPES
+    from membrain import import_batches
+    assert "task" in import_batches.DISTILL_TYPES
     assert "task" in session_import.SESSION_DISTILL_SYSTEM
     assert "Skip work logs, task status" not in session_import.SESSION_DISTILL_SYSTEM
 

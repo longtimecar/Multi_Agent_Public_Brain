@@ -1270,34 +1270,18 @@ async function startSessionImport(mode) {
   }
 }
 
-function renderImportCard(preview, batches) {
+function renderImportCard(batches) {
   const card = $('#import-card');
   const report = state.lib.lastReport;
-  const done = report ? `<p class="import-note">刚完成：新放入资料库 ${report.archived_new} 篇，提炼出 ${report.facts_added} 条个人偏好${
-    report.errors?.length ? `，另有 ${report.errors.length} 篇因模型限流没能提炼，再点一次导入即可补上（已导入的不会重复）` : ''}。</p>` : '';
-  if (!(preview.total > 0) && !batches?.length) {
-    let note;
-    if (!preview.configured) {
-      note = '未配置 OpenViking 数据源。它是可选的旧记忆来源；没有它一切功能照常，历史会话请用上方的「Agent 会话导入」。';
-    } else if (!preview.available) {
-      note = `已配置的 OpenViking 路径不可用：${preview.root || '（空路径）'}。请检查 MEMBRAIN_OPENVIKING_ROOT 是否指向包含 memories/ 的用户目录。`;
-    } else {
-      note = `已连接 ${preview.root || 'OpenViking 数据源'}，但暂时没有可导入的笔记。`;
-    }
-    card.innerHTML = `<h3>从 OpenViking 导入旧记忆</h3><p class="import-note">${escapeHtml(note)}</p>`;
+  const done = report ? `<p class="import-note">刚完成：新放入资料库 ${report.archived_new} 篇，提炼出 ${report.facts_added} 条记忆${
+    report.errors?.length ? `，另有 ${report.errors.length} 篇处理遇到错误` : ''}。</p>` : '';
+  if (!batches?.length && !done) {
+    card.innerHTML = '<h3>导入批次记录</h3><p class="import-note">导入本机 Agent 会话后，这里会列出每一批导入记录，支持整批撤销。</p>';
     return;
   }
-  const actionable = preview.new > 0 || preview.to_distill > 0;
-  const rows = (batches || []).map((b) => `<div class="batch-row"><span>${escapeHtml(formatTime(b.created))}　资料 ${b.archived}　偏好 ${b.facts}${b.undone ? '　已撤销' : ''}</span>${
+  const rows = (batches || []).map((b) => `<div class="batch-row"><span>${escapeHtml(formatTime(b.created))}　资料 ${b.archived}　记忆 ${b.facts}${b.undone ? '　已撤销' : ''}</span>${
     b.undone ? '' : `<button class="button button-outline" type="button" data-undo="${escapeHtml(b.batch)}">撤销这一批</button>`}</div>`).join('');
-  card.innerHTML = `<h3>从 OpenViking 导入旧记忆</h3>
-    <p class="import-note">来源：${escapeHtml(preview.root)}（只读，不会改动它）。共找到 ${preview.total} 篇，其中 ${preview.already_imported} 篇已导入。
-    点击后会按类别自动归档到资料库，其中的个人偏好和规则会再提炼成短记忆。</p>
-    <div class="import-stats">${categoryChips(preview.by_category)}</div>
-    <div class="import-actions"><button class="button button-dark" id="import-start" type="button" ${actionable ? '' : 'disabled'}>${
-      actionable ? '一键导入' : '没有待导入内容'}</button><span class="import-note" id="import-status"></span></div>
-    ${done}${rows}`;
-  $('#import-start').addEventListener('click', startImport);
+  card.innerHTML = `<h3>导入批次记录</h3>${done}${rows}`;
   $$('[data-undo]').forEach((button) => button.addEventListener('click', () => undoImport(button.dataset.undo, button)));
 }
 
@@ -1307,24 +1291,22 @@ async function loadImport() {
   const foldCount = $('#import-fold-count');
   if (foldCount && !state.lib.importLoaded) foldCount.textContent = '正在扫描…';
   const settled = await Promise.allSettled([
-    fetchJson('/api/import/sessions/preview'), fetchJson('/api/import/preview'), fetchJson('/api/import/batches')]);
-  const [sessionResult, previewResult, batchResult] = settled;
+    fetchJson('/api/import/sessions/preview'), fetchJson('/api/import/batches')]);
+  const [sessionResult, batchResult] = settled;
   const sessions = sessionResult.status === 'fulfilled' ? sessionResult.value : null;
-  const preview = previewResult.status === 'fulfilled' ? previewResult.value : null;
   const batches = batchResult.status === 'fulfilled' ? batchResult.value : null;
   if (sessions) {
-    state.lib.labels = preview?.labels || sessions.labels || state.lib.labels;
+    state.lib.labels = sessions.labels || state.lib.labels;
     renderSessionImport(sessions);
   } else {
     $('#session-import-card').innerHTML = `<h3>Agent 会话导入</h3><p class="import-note">${escapeHtml(sessionResult.reason?.message || '扫描失败')}</p>`;
   }
-  if (preview && batches) renderImportCard(preview, batches.batches);
-  else $('#import-card').innerHTML = `<h3>从 OpenViking 导入旧记忆</h3><p class="import-note">${escapeHtml(previewResult.reason?.message || batchResult.reason?.message || '读取失败')}</p>`;
+  if (batches) renderImportCard(batches.batches);
+  else $('#import-card').innerHTML = `<h3>导入批次记录</h3><p class="import-note">${escapeHtml(batchResult.reason?.message || '读取失败')}</p>`;
   if (foldCount && sessions) {
-    const ovPart = preview?.total > 0 ? ` · OV ${preview.already_imported}/${preview.total}` : '';
-    foldCount.textContent = `会话 ${sessions.already_imported}/${sessions.total}（噪声 ${sessions.noise || 0}）${ovPart}`;
+    foldCount.textContent = `会话 ${sessions.already_imported}/${sessions.total}（噪声 ${sessions.noise || 0}）`;
     const hint = $('#import-fold')?.querySelector('.import-fold-hint');
-    if (hint) hint.textContent = `自动发现 ${sessions.sources?.length || 0} 个会话源${preview?.total > 0 ? ' + OpenViking' : ''} · 展开管理`;
+    if (hint) hint.textContent = `自动发现 ${sessions.sources?.length || 0} 个会话源 · 展开管理`;
   } else if (foldCount) {
     foldCount.textContent = '扫描失败';
   }
@@ -1332,15 +1314,6 @@ async function loadImport() {
   state.lib.importLoading = false;
   const failed = settled.find((result) => result.status === 'rejected');
   if (failed) notify(failed.reason?.message || '部分导入信息读取失败。', true);
-}
-
-async function startImport() {
-  const button = $('#import-start');
-  button.disabled = true;
-  try {
-    await fetchJson('/api/import/start', { method: 'POST', body: '{}' });
-    pollImport('openviking');
-  } catch (error) { notify(error.message, true); button.disabled = false; }
 }
 
 function pollImport(kind = '') {

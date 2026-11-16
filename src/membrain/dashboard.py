@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, unquote, urlparse, urlsplit
 
 from pydantic import ValidationError
 
-from . import agents, archive, autostart, health, openviking_import, session_import
+from . import agents, archive, autostart, health, import_batches, session_import
 from . import agents as agent_names
 from .config import DEFAULT_ENV_FILE, IN_CHECKOUT, REPO_ROOT
 from .embeddings import Embedder, EmbeddingError
@@ -156,9 +156,6 @@ class DashboardRuntime:
         self._job: dict[str, Any] = {"status": "idle", "report": None, "error": None}
         self._chat_lock = threading.Lock()
         self._chats: dict[str, list[dict[str, str]]] = {}
-        # Optional history source, configured by the owner. The request body
-        # never chooses a filesystem path.
-        self.import_root = self.service.settings.openviking_root
         self._import_job: dict[str, Any] = {"status": "idle", "kind": None}
         self._import_lock = threading.Lock()
         self._recall_job_lock = threading.Lock()
@@ -223,38 +220,6 @@ class DashboardRuntime:
         ok = rag.delete_document(self.service.settings.home, doc_id)
         return {"ok": ok}
 
-    def import_preview(self) -> dict[str, Any]:
-        return {**openviking_import.preview(self.service, self.import_root),
-                "labels": archive.CATEGORY_LABELS, "source_labels": session_import.SOURCE_LABELS}
-
-    def start_import(self) -> tuple[dict[str, Any], bool]:
-        with self._import_lock:
-            if self._import_job.get("status") == "running":
-                if self._import_job.get("kind") != "openviking":
-                    raise ValueError("已有 Agent 会话导入任务正在运行，请等待它完成。")
-                return dict(self._import_job), False
-            if self.import_root is None or not self.import_root.is_dir():
-                raise ValueError("OpenViking 数据源未配置或目录不可用，无法导入。")
-            job_id = uuid.uuid4().hex
-            self._import_job = {"id": job_id, "kind": "openviking", "status": "running", "progress": {"stage": "preparing"}}
-
-        def update(**fields: Any) -> None:
-            with self._import_lock:
-                if self._import_job.get("id") == job_id:
-                    self._import_job = {**self._import_job, **fields}
-
-        def run() -> None:
-            try:
-                report = openviking_import.apply_import(
-                    self.service, self.llm_client, self.import_root,
-                    progress=lambda p: update(progress=p))
-                update(status="done", report=report, progress=None)
-            except Exception as exc:  # the page shows a recoverable message
-                update(status="error", error=str(exc) or exc.__class__.__name__, progress=None)
-
-        threading.Thread(target=run, name="membrain-dashboard-import", daemon=True).start()
-        return self.import_job(), True
-
     def import_job(self) -> dict[str, Any]:
         with self._import_lock:
             return dict(self._import_job)
@@ -269,7 +234,7 @@ class DashboardRuntime:
         with self._import_lock:
             if self._import_job.get("status") == "running":
                 if self._import_job.get("kind") != "sessions":
-                    raise ValueError("已有 OpenViking 导入任务正在运行，请等待它完成。")
+                    raise ValueError("已有其他导入任务正在运行，请等待它完成。")
                 return dict(self._import_job), False
             job_id = uuid.uuid4().hex
             self._import_job = {"id": job_id, "kind": "sessions", "status": "running", "progress": {"stage": "preparing"}}
@@ -1672,14 +1637,12 @@ def make_handler(runtime: DashboardRuntime):
                          "confidence": round(f.confidence, 2)}
                         for f in tasks
                     ], "count": len(tasks)})
-                elif parsed.path == "/api/import/preview":
-                    self._json(200, runtime.import_preview())
                 elif parsed.path == "/api/import/sessions/preview":
                     self._json(200, runtime.session_import_preview())
                 elif parsed.path == "/api/import/job":
                     self._json(200, runtime.import_job())
                 elif parsed.path == "/api/import/batches":
-                    self._json(200, {"batches": openviking_import.list_batches(runtime.service)})
+                    self._json(200, {"batches": import_batches.list_batches(runtime.service)})
                 elif parsed.path == "/api/rag/documents":
                     self._json(200, runtime.rag_list())
                 elif parsed.path == "/api/rag/search":
@@ -1801,9 +1764,6 @@ def make_handler(runtime: DashboardRuntime):
                     self._json(200, runtime.test_rerank())
                 elif path == "/api/autostart":
                     self._json(200, autostart.set_enabled(bool(data.get("enabled"))))
-                elif path == "/api/import/start":
-                    job, started = runtime.start_import()
-                    self._json(202 if started else 409, job)
                 elif path == "/api/import/sessions/start":
                     def _keys(name: str) -> list[str] | None:
                         value = data.get(name)
@@ -1824,7 +1784,7 @@ def make_handler(runtime: DashboardRuntime):
                             clear_skips=bool(data.get("clear_skips")))
                         self._json(202 if started else 409, job)
                 elif path == "/api/import/undo":
-                    self._json(200, openviking_import.undo_batch(service, str(data.get("batch", ""))))
+                    self._json(200, import_batches.undo_batch(service, str(data.get("batch", ""))))
                 elif path.startswith("/api/agents/") and path.endswith("/connect"):
                     key = unquote(path.removeprefix("/api/agents/").removesuffix("/connect").strip("/"))
                     result = agents.connect(key, service.settings.home)

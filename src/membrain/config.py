@@ -153,9 +153,6 @@ class Settings:
     rerank_api_key: str | None = None
     rerank_model: str | None = None
     rerank_timeout: float = 20.0
-    # Optional legacy source. It is unset by default so a fresh install never
-    # scans a path that belonged to the machine that built the release.
-    openviking_root: Path | None = None
     # Operator timezone (IANA name, "" = system default). Drives which calendar
     # day a captured turn belongs to and how "昨晚" resolves on recall.
     tz: str = ""
@@ -213,8 +210,6 @@ def load_settings() -> Settings:
     env_file = Path(_env("MEMBRAIN_ENV_FILE") or DEFAULT_ENV_FILE).expanduser()
     found = load_dotenv(env_file)
     home = Path(_env("MEMBRAIN_HOME") or DEFAULT_HOME).expanduser().resolve()
-    openviking_raw = _env("MEMBRAIN_OPENVIKING_ROOT")
-    openviking_root = Path(openviking_raw).expanduser().resolve() if openviking_raw else None
     semantic_floor = _env_float("MEMBRAIN_SEMANTIC_FLOOR", DEFAULT_SEMANTIC_FLOOR)
     if not math.isfinite(semantic_floor) or not 0.0 <= semantic_floor <= 1.0:
         semantic_floor = DEFAULT_SEMANTIC_FLOOR
@@ -255,6 +250,5 @@ def load_settings() -> Settings:
         rerank_api_key=_env("MEMBRAIN_RERANK_API_KEY"),
         rerank_model=_env("MEMBRAIN_RERANK_MODEL"),
         rerank_timeout=_env_float("MEMBRAIN_RERANK_TIMEOUT", 20.0),
-        openviking_root=openviking_root,
         tz=(_env("MEMBRAIN_TZ") or "").strip(),
     )
