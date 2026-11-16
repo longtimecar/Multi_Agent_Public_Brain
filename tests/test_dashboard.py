@@ -218,6 +218,29 @@ def test_dashboard_rejects_cross_site_memory_writes(dashboard):
     assert service.store.all_facts() == []
 
 
+@pytest.mark.parametrize("path", ["/", "/app.js", "/api/overview", "/api/facts", "/api/episodes",
+                                  "/api/profile", "/api/chat-sessions", "/api/archive"])
+def test_dashboard_rejects_rebound_hosts_on_reads(dashboard, path):
+    # DNS rebinding: a page on evil.example resolves its own name to 127.0.0.1,
+    # so the browser sends same-origin GETs whose Host is the attacker's name.
+    request, _ = dashboard
+    status, _, _ = request("/api/facts", {
+        "type": "fact",
+        "subject": "secret",
+        "claim": "Private memory.",
+        "quote": "My private memory secret.",
+    })
+    assert status == 201
+    status, _, raw = request(path, headers={"Host": "evil.example:1966"})
+    assert status == 403
+    assert b"Private memory" not in raw
+    status, _, raw = request(path, headers={"Origin": "http://evil.example"})
+    assert status == 403
+    assert b"Private memory" not in raw
+    status, _, _ = request(path, headers={"Origin": "null"})
+    assert status == 403
+
+
 def test_dashboard_chat_and_model_status_keep_assistant_out_of_memory_evidence(tmp_path):
     settings = Settings(
         home=tmp_path / "memory",

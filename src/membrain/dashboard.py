@@ -1349,6 +1349,32 @@ def make_handler(runtime: DashboardRuntime):
                 raise ValueError("请求内容格式无效。")
             return value
 
+        def _foreign_request(self) -> bool:
+            """Whether this request did not come from the local dashboard page.
+
+            Binding to loopback is not enough on its own. With DNS rebinding a
+            web page on an attacker's domain can resolve that domain to
+            127.0.0.1 and then read every memory over plain GET requests; the
+            browser treats it as same-origin. Such a request still carries the
+            attacker's name in Host, so every method, reads included, checks it.
+            """
+            host_header = self.headers.get("Host", "")
+            host_name = urlparse("//" + host_header).hostname or ""
+            origin = self.headers.get("Origin")
+            return not _loopback(host_name) or (origin is not None and urlparse(origin).netloc != host_header)
+
+        def _reject_foreign(self) -> None:
+            # Drain the body before answering. Replying with unread bytes
+            # still in the socket makes the client see a connection reset
+            # instead of the 403, which read as a random test flake.
+            try:
+                length = int(self.headers.get("Content-Length", "0") or 0)
+                if 0 < length <= MAX_BODY_BYTES:
+                    self.rfile.read(length)
+            except (ValueError, OSError):
+                pass
+            self._json(403, {"error": "仅允许从本机后台页面访问。"})
+
         def _profile(self) -> dict[str, Any]:
             path = runtime.service.settings.profile_path
             return {"exists": path.is_file(), "content": path.read_text(encoding="utf-8") if path.is_file() else ""}
@@ -1599,6 +1625,9 @@ def make_handler(runtime: DashboardRuntime):
 
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
+            if self._foreign_request():
+                self._reject_foreign()
+                return
             try:
                 if parsed.path == "/api/overview":
                     self._json(200, self._overview())
@@ -1700,20 +1729,8 @@ def make_handler(runtime: DashboardRuntime):
         def do_POST(self) -> None:
             path = urlparse(self.path).path
             try:
-                host_header = self.headers.get("Host", "")
-                host_name = urlparse("//" + host_header).hostname or ""
-                origin = self.headers.get("Origin")
-                if not _loopback(host_name) or (origin and urlparse(origin).netloc != host_header):
-                    # Drain the body before answering. Replying with unread bytes
-                    # still in the socket makes the client see a connection reset
-                    # instead of the 403, which read as a random test flake.
-                    try:
-                        length = int(self.headers.get("Content-Length", "0") or 0)
-                        if 0 < length <= MAX_BODY_BYTES:
-                            self.rfile.read(length)
-                    except (ValueError, OSError):
-                        pass
-                    self._json(403, {"error": "仅允许从本机后台页面提交操作。"})
+                if self._foreign_request():
+                    self._reject_foreign()
                     return
                 data = self._body(MAX_UPLOAD_BYTES if path == "/api/rag/upload" else MAX_BODY_BYTES)
                 service = runtime.service
