@@ -20,7 +20,7 @@ import string
 import tempfile
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Iterable, Iterator
+from typing import Any, Iterable, Iterator
 
 import yaml
 from pydantic import ValidationError
@@ -171,13 +171,19 @@ class Store:
 
     @staticmethod
     def _apply_events(fact: Fact, events: Iterable[dict]) -> Fact:
+        event_list = list(events)
+        undone_resolutions = {
+            ev.get("resolution_id")
+            for ev in event_list
+            if ev.get("op") == "undo_auto_resolve" and ev.get("resolution_id")
+        }
         status = fact.status
         valid_to = fact.valid_to
         reason = fact.retracted_reason
         closed_at = fact.closed_at
         evidence = list(fact.evidence)
         seen = {item.episode for item in evidence}
-        for ev in events:
+        for ev in event_list:
             op = ev.get("op")
             if op == "corroborate":
                 try:
@@ -196,6 +202,19 @@ class Store:
             elif op == "resolve":
                 if status not in (Status.RETRACTED, Status.SUPERSEDED):
                     status = Status.ACTIVE if ev.get("keep") else Status.RETRACTED
+            elif op == "auto_resolve":
+                if ev.get("resolution_id") in undone_resolutions:
+                    continue
+                role = ev.get("role")
+                if role == "drop":
+                    if status != Status.RETRACTED:
+                        status = Status.SUPERSEDED
+                    raw = ev.get("valid_to")
+                    if raw:
+                        valid_to = date.fromisoformat(raw)
+                elif role == "keep":
+                    if status not in (Status.RETRACTED, Status.SUPERSEDED):
+                        status = Status.ACTIVE
             elif op == "supersede":
                 if status != Status.RETRACTED:
                     status = Status.SUPERSEDED
@@ -271,8 +290,8 @@ class Store:
     def contest_pairs(self, pairs: list[tuple[str, str, str]]) -> int:
         """Flag (a, b, reason) pairs as contested. Idempotent.
 
-        Detection lives in conflict.py; this only records the outcome. Nothing
-        here picks a winner — that is the human's call, via `resolve`.
+        Detection lives in conflict.py; this only records the outcome. Unresolved
+        ties and constraints wait here for the human's call via `resolve`.
         """
         existing = {e.get("note") for fid in self._ledger_state().values() for e in fid if e.get("op") == "contest"}
         marked = 0
@@ -286,9 +305,148 @@ class Store:
         return marked
 
     def resolve(self, keep: str, drop: str) -> None:
-        """Human-decided resolution. The only path from contested to settled."""
+        """Human-decided resolution. Transitions contested pairs to settled."""
         self._append_ledger({"op": "resolve", "id": keep, "keep": True, "dropped": drop, "ts": _now().isoformat()})
         self._append_ledger({"op": "retract", "id": drop, "reason": f"resolved in favour of {keep}", "ts": _now().isoformat()})
+
+    def auto_resolve(self, keep: str, drop: str, *, tier: int, reason: str,
+                     conflict_reason: str = "") -> str:
+        """Record a reversible 4-tier automatic conflict resolution in the ledger."""
+        if not keep or not drop or keep == drop:
+            raise StoreError("auto_resolve requires two distinct facts")
+        with file_lock(self.ledger_lock_path):
+            keep_fact = self.get_fact(keep)
+            drop_fact = self.get_fact(drop)
+            if FactType.CONSTRAINT in {keep_fact.type, drop_fact.type}:
+                raise StoreError("硬约束只能由用户手动处理。")
+            if not keep_fact.is_live or not drop_fact.is_live:
+                raise StoreError("只能对有效记忆执行冲突自动处理。")
+            resolution_id = f"ar_{_now().strftime('%Y%m%d%H%M%S%f')}_{_suffix(4)}"
+            ts = _now().isoformat()
+            self._append_ledger_locked({
+                "op": "auto_resolve",
+                "id": keep,
+                "resolution_id": resolution_id,
+                "role": "keep",
+                "other": drop,
+                "tier": int(tier),
+                "reason": reason,
+                "conflict_reason": conflict_reason,
+                "ts": ts,
+            })
+            self._append_ledger_locked({
+                "op": "auto_resolve",
+                "id": drop,
+                "resolution_id": resolution_id,
+                "role": "drop",
+                "other": keep,
+                "tier": int(tier),
+                "reason": reason,
+                "conflict_reason": conflict_reason,
+                "valid_to": date.today().isoformat(),
+                "ts": ts,
+            })
+            return resolution_id
+
+    def list_auto_resolutions(self, include_undone: bool = False) -> list[dict[str, Any]]:
+        """Return reversible automatic conflict resolutions, newest first."""
+        if not self.ledger_path.exists():
+            return []
+        by_id: dict[str, dict[str, Any]] = {}
+        order: list[str] = []
+        undone: set[str] = set()
+        with open(self.ledger_path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                op = ev.get("op")
+                rid = ev.get("resolution_id")
+                if not rid:
+                    continue
+                if op == "auto_resolve":
+                    row = by_id.get(rid)
+                    if row is None:
+                        row = {
+                            "resolution_id": rid,
+                            "keep_id": "",
+                            "drop_id": "",
+                            "tier": int(ev.get("tier") or 0),
+                            "reason": str(ev.get("reason") or ""),
+                            "conflict_reason": str(ev.get("conflict_reason") or ""),
+                            "ts": str(ev.get("ts") or ""),
+                        }
+                        by_id[rid] = row
+                        order.append(rid)
+                    if ev.get("role") == "keep":
+                        row["keep_id"] = str(ev.get("id") or "")
+                        if ev.get("other") and not row["drop_id"]:
+                            row["drop_id"] = str(ev.get("other"))
+                    elif ev.get("role") == "drop":
+                        row["drop_id"] = str(ev.get("id") or "")
+                        if ev.get("other") and not row["keep_id"]:
+                            row["keep_id"] = str(ev.get("other"))
+                elif op == "undo_auto_resolve":
+                    undone.add(rid)
+        out: list[dict[str, Any]] = []
+        for rid in reversed(order):
+            if not include_undone and rid in undone:
+                continue
+            row = dict(by_id[rid])
+            row["undone"] = rid in undone
+            for key, id_field in (("keep", "keep_id"), ("drop", "drop_id")):
+                fid = row[id_field]
+                if fid:
+                    try:
+                        fact = self.get_fact(fid)
+                        row[f"{key}_claim"] = fact.claim
+                        row[f"{key}_status"] = fact.status.value
+                    except StoreError:
+                        row[f"{key}_claim"] = ""
+                        row[f"{key}_status"] = "missing"
+                else:
+                    row[f"{key}_claim"] = ""
+                    row[f"{key}_status"] = "missing"
+            out.append(row)
+        return out
+
+    def undo_auto_resolve(self, resolution_id: str) -> dict[str, Any]:
+        """Undo one automatic conflict resolution, returning both facts to CONTESTED."""
+        rid = str(resolution_id or "").strip()
+        if not rid:
+            raise StoreError("需要 resolution_id。")
+        with file_lock(self.ledger_lock_path):
+            records = self.list_auto_resolutions(include_undone=True)
+            match = next((item for item in records if item["resolution_id"] == rid), None)
+            if match is None:
+                raise StoreError("没有找到这条自动冲突处理记录。")
+            if match["undone"]:
+                raise StoreError("这条自动冲突处理已经撤销过了。")
+            keep_id = match["keep_id"]
+            drop_id = match["drop_id"]
+            if not keep_id or not drop_id:
+                raise StoreError("自动冲突处理记录不完整，无法撤销。")
+            ts = _now().isoformat()
+            note = f"{min(keep_id, drop_id)}~{max(keep_id, drop_id)}: undone {rid}"
+            for fid in (keep_id, drop_id):
+                self._append_ledger_locked({
+                    "op": "undo_auto_resolve",
+                    "id": fid,
+                    "resolution_id": rid,
+                    "ts": ts,
+                })
+            for fid in (keep_id, drop_id):
+                self._append_ledger_locked({
+                    "op": "contest",
+                    "id": fid,
+                    "note": note,
+                    "ts": ts,
+                })
+            return {"ok": True, "resolution_id": rid, "keep_id": keep_id, "drop_id": drop_id}
 
     # ------------------------------------------------------------ episodes
 

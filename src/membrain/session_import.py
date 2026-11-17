@@ -6,10 +6,10 @@ noise; rule-based noise filters run first so junk never costs an LLM call.
 Content-hash entry ids make reruns free. Each import writes its batch manifest
 twice: `in_progress` before the first archive write, `completed` only after the
 whole pass succeeds, so a crash always leaves a batch a rerun can resume instead
-of half-written archive state with no record. Batch manifests reuse the
-OpenViking import/batches/undo bookkeeping unchanged. Fact distillation is
-opt-in and quote-verified. LLM failure is fail-open: the entry still lands with
-rule-based fields and can be reclassified later.
+of half-written archive state with no record. Batch manifests and undo reuse the
+shared `import_batches` module. Fact distillation is opt-in and quote-verified.
+LLM failure is fail-open: the entry still lands with rule-based fields and can
+be reclassified later.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import agents
-from . import openviking_import as ov
+from . import import_batches
 from .archive import ArchiveEntry, CATEGORY_LABELS, content_hash, entry_id, make_abstract
 from .config import local_date
 from .llm import LLMError
@@ -939,14 +939,15 @@ def classify_with_cache(llm: Any, svc: Any, cache: dict[str, Any], chash: str,
 
 # Internal source key -> name shown in the dashboard. Keys without a spec
 # here are shown as-is; agents.py is the single place that knows the names.
+from .external_import import PLATFORM_LABELS
+
 SOURCE_LABELS: dict[str, str] = {}
 for _spec in agents.SPECS:
     SOURCE_LABELS[_spec.key] = _spec.name
+SOURCE_LABELS.update(PLATFORM_LABELS)
 SOURCE_LABELS.update({
     "dsh": "DeepSeek Harness",
     "claude-code": SOURCE_LABELS.get("claude-code", "Claude Code"),
-    "openviking": "OpenViking",
-    "openviking-import": "OpenViking 导入",
     "unknown-agent": "未知来源",
     "unknown": "未标记来源",
     "membrain-dashboard": "工作台录入",
@@ -1011,10 +1012,10 @@ def _norm(text: str) -> str:
 def _distill_entry(llm: Any, entry: ArchiveEntry) -> tuple[list[dict[str, str]], int]:
     for wait in RATE_LIMIT_WAITS:
         try:
-            return ov.distill(llm, entry, system=SESSION_DISTILL_SYSTEM)
+            return import_batches.distill(llm, entry, system=SESSION_DISTILL_SYSTEM)
         except LLMError:
             time.sleep(wait)
-    return ov.distill(llm, entry, system=SESSION_DISTILL_SYSTEM)
+    return import_batches.distill(llm, entry, system=SESSION_DISTILL_SYSTEM)
 
 
 # ---------------------------------------------------------------- batch manifest

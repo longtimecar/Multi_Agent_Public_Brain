@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from membrain import openviking_import as ov
+from membrain import import_batches
 from membrain import session_import as si
 from membrain.llm import FakeLLMClient, LLMError
 from membrain.server import MemoryService
@@ -38,7 +38,7 @@ def _claude_file(root: Path, name: str, turns: list[tuple[str, str]]) -> Path:
 def _setup(tmp_path, monkeypatch):
     from test_core import make_settings
     monkeypatch.setattr(si, "CALL_PAUSE", 0)
-    monkeypatch.setattr(ov, "CALL_PAUSE", 0)
+    monkeypatch.setattr(import_batches, "CALL_PAUSE", 0)
     agent_home = tmp_path / "agenthome"
     monkeypatch.setattr(si, "HOME", agent_home)
     return MemoryService(make_settings(tmp_path / "home")), agent_home
@@ -65,7 +65,7 @@ def test_session_import_classify_noise_dedupe_and_undo(tmp_path, monkeypatch):
     again = si.apply_import(svc, llm)
     assert again["archived_new"] == 0 and again["archive_existing"] == 1
 
-    undone = ov.undo_batch(svc, report["batch"])
+    undone = import_batches.undo_batch(svc, report["batch"])
     assert undone == {"facts_retracted": 0, "archive_hidden": 1}
 
 

@@ -409,6 +409,7 @@ dialog::backdrop { background: rgba(19, 38, 39, .38); }
 
 /* 开机自启动开关 */
 .service-row { display: flex; align-items: center; justify-content: space-between; gap: 26px; }
+.service-row-divider { margin-top: 16px; padding-top: 16px; border-top: 1px dashed var(--line, #e6e2da); }
 .service-copy { min-width: 0; max-width: 660px; }
 .service-copy strong { display: block; margin-bottom: 6px; color: var(--ink); font-size: 13px; }
 .service-copy p { margin: 0 0 6px; color: var(--ink-soft); font-size: 11.5px; line-height: 1.7; }
@@ -879,3 +880,29 @@ dialog, .dialog-card { border-radius: 16px; }
 .session-row-main { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .session-title { font-size: 12px; color: var(--ink, #241f1a); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-row-meta { flex: none; font-size: 11px; color: var(--ink-soft, #7a7268); display: flex; align-items: center; gap: 6px; }
+
+/* External AI import & reversible auto-resolution history */
+.external-import-form { display: flex; flex-direction: column; gap: 10px; }
+.external-import-row { display: grid; grid-template-columns: minmax(150px, .55fr) minmax(0, 1fr); gap: 10px; }
+.external-import-field { display: grid; gap: 5px; font-size: 11px; color: var(--ink-soft, #7a7268); font-weight: 700; }
+.external-import-field select,
+.external-import-field input { min-height: 36px; border: 1px solid var(--line, #e6e2da); border-radius: 8px; background: #fff; color: var(--ink); padding: 0 10px; font: inherit; font-size: 12.5px; }
+.external-import-textarea { width: 100%; min-height: 120px; border: 1px solid var(--line, #e6e2da); border-radius: 8px; background: #fff; color: var(--ink); padding: 10px 12px; font: inherit; font-size: 12.5px; line-height: 1.6; resize: vertical; }
+.external-import-textarea:focus,
+.external-import-field select:focus,
+.external-import-field input:focus { border-color: var(--teal); outline: 0; box-shadow: 0 0 0 3px rgba(24,142,136,.1); }
+.external-import-mode { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.external-import-radio { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink); cursor: pointer; }
+.external-import-radio input { accent-color: var(--teal); }
+.external-prompt-preview { margin: 0; padding: 10px 12px; border: 1px solid var(--line, #e6e2da); border-radius: 8px; background: var(--surface, #f6f3ee); font-size: 11.5px; line-height: 1.55; white-space: pre-wrap; max-height: 190px; overflow: auto; color: var(--ink-soft); }
+.health-auto-section { margin-top: 8px; padding-top: 14px; border-top: 1px solid var(--line, #e6e2da); display: grid; gap: 10px; }
+.health-auto-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.health-auto-head h3 { margin: 0; font-size: 14px; }
+.health-auto-list { display: grid; gap: 8px; }
+.health-auto-item { display: flex; justify-content: space-between; align-items: center; gap: 12px; border: 1px solid var(--line, #e6e2da); border-radius: var(--radius); padding: 12px 14px; background: #fffefa; }
+.health-auto-claims { min-width: 0; display: grid; gap: 4px; font-size: 12.5px; }
+.health-auto-meta { font-size: 11px; color: var(--ink-soft); }
+@media (max-width: 720px) {
+  .external-import-row { grid-template-columns: 1fr; }
+  .health-auto-item { flex-direction: column; align-items: flex-start; }
+}

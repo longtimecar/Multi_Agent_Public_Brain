@@ -42,18 +42,37 @@ that makes this memory yours rather than a vendor's.
    ("I'm allergic to peanuts") is asserted from one episode (0.62–0.70); a hedged
    one ("maybe", "也许") stays under 0.40 until it recurs across days. Silence
    never counts as confirmation.
-6. **Conflicts are surfaced, never auto-resolved.** Detection is automatic and
-   mechanical; resolution is `membrain resolve`, by you.
+6. **Conflicts are detected mechanically and handled safely.** Ambiguous ties and
+   `constraint` facts always stay `contested` for `membrain resolve`; clear
+   non-constraint contradictions follow a deterministic 4-tier rule (local firm
+   statement > external import, explicit change cue, or strictly more
+   independent evidence) with full ledger undo (`undo_auto_resolve`).
 7. **Constraints are human-only.** No MCP tool can write a `constraint`, so a
    poisoned tool result cannot become a standing instruction.
 
 ## Install
+
+### Windows one-click setup (recommended on Windows)
+
+```powershell
+git clone https://github.com/longtimecar/Multi_Agent_Public_Brain.git
+cd Multi_Agent_Public_Brain
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+`install.ps1` ensures `uv` is available, runs `uv sync`, copies `.env.example`
+to `.env` if you do not have one yet, initializes `memory/`, and creates a
+windowless desktop shortcut (`membrain 记忆后台.lnk` via `uv run membrain shortcut`).
+Logon autostart stays **off** by default.
+
+### Manual setup (Windows / Linux / macOS)
 
 ```bash
 git clone https://github.com/longtimecar/Multi_Agent_Public_Brain.git
 cd Multi_Agent_Public_Brain
 uv sync
 uv run membrain init
+uv run membrain shortcut   # optional on Windows: create desktop launcher
 ```
 
 `membrain init` creates an empty `memory/` tree on your machine. The repository
@@ -85,11 +104,6 @@ The configured LLM extracts facts in the background after captured turns.
 Run `uv run membrain extract` to process pending turns manually; extraction
 errors are reported and pending turns can be retried.
 
-OpenViking history is optional and disabled by default. Point
-`MEMBRAIN_OPENVIKING_ROOT` at the OpenViking user folder only if you want the
-legacy import card to scan it. With no value set, membrain never looks for a
-built-in OpenViking path on your machine.
-
 ## Use
 
 ```bash
@@ -103,15 +117,21 @@ uv run membrain resolve f_NEW --drop f_OLD
 uv run membrain reindex
 uv run membrain stats
 uv run membrain extract
+uv run membrain shortcut
 uv run membrain doctor
 ```
 
-For a browser-based memory manager, run `uv run membrain dashboard`. It opens
-the local dashboard at `http://127.0.0.1:1966/` and uses the same memory files
-as the CLI and MCP server. The service binds to loopback only. Its interface
-can add facts from owner-entered quotes, replace or retract memories, review
-conflicts, trigger extraction, and rebuild the disposable index. Fact Markdown
-files remain immutable; lifecycle changes are appended to the ledger.
+For a browser-based memory manager, run `uv run membrain dashboard` (or on
+Windows double-click the `membrain 记忆后台.lnk` desktop shortcut created by
+`install.ps1` / `uv run membrain shortcut` / Settings -> **创建桌面快捷方式**).
+It opens the local dashboard at `http://127.0.0.1:1966/` and uses the same
+memory files as the CLI and MCP server. The service binds to loopback only and
+guards both GET and POST against DNS rebinding (`Host` / `Origin`). Its
+interface can add facts from owner-entered quotes, replace or retract memories,
+review contested conflicts or undo automatic 4-tier conflict decisions, import
+external AI exports (`memory` or `rag` mode with batch undo), trigger extraction,
+and rebuild the disposable index. Fact Markdown files remain immutable;
+lifecycle changes are appended to the ledger.
 
 ![membrain dashboard — memory overview](docs/images/dashboard.png)
 
@@ -151,10 +171,18 @@ Other agents use the same shim with their own event names — Codex and Cursor
 expose hooks, Gemini CLI uses `SessionStart` / `BeforeAgent` / `SessionEnd`,
 OpenCode uses a plugin. Anything without hooks still gets memory through MCP.
 
-**What is not supported, on purpose:** scraping web chat UIs and HTTPS
-interception. They break on every redesign, violate terms of service at every
-vendor simultaneously, and lose fidelity. Use the official data export for
-backfill instead.
+**External AI export import (ChatGPT / Claude / Gemini / Kimi / Doubao / DeepSeek).**
+What is not supported, on purpose, is scraping web chat UIs or HTTPS
+interception — they break on every redesign, violate vendor terms of service,
+and lose fidelity. Instead, open **资料库 -> 数据导入 -> 从其他 AI 导入记忆 / 资料**
+in the dashboard to copy a guided bilingual export prompt (`external_import.py`),
+paste the reply back, and pick either:
+
+- **记忆模式 (`memory`)**: distills durable claims tagged `origin="imported"`
+  (never writes `constraint` or `trait`; local firm `stated` facts still take
+  precedence in conflict checks), with full batch undo.
+- **资料库模式 (`rag`)**: stores the export as reference material in the RAG
+  library without automatically injecting it into future prompts.
 
 ## Capture, tasks and time
 
@@ -165,7 +193,7 @@ its own:
 ```bash
 uv run membrain watch --once       # one capture pass, then exit
 uv run membrain watch              # keep capturing in the foreground
-uv run membrain autostart          # install capture-at-login (Windows)
+uv run membrain autostart          # optional capture-at-login on Windows (off by default)
 uv run membrain autostart --remove
 ```
 
@@ -200,16 +228,22 @@ become a memory.
 ## Hygiene
 
 ```bash
-uv run pytest -q
+uv run pytest tests -q
+node --check src/membrain/web/app.js
+uv run python scripts/eval_extraction.py --fake --verbose
 ```
 
 Covers: fact round-trip, append-only immutability, ledger folding, confidence
 capping, same-day corroboration not promoting, lexical and semantic recall,
-budget enforcement without mid-item truncation, conflict surfacing without
-resolution, explicit resolution, index rebuild from Markdown, and evidence
-validation.
+budget enforcement without mid-item truncation, reversible 4-tier conflict
+handling (`constraint` and ties kept contested), external AI import & batch
+undo, HTTP DNS-rebinding guards, mocked Windows shortcut wiring, index rebuild
+from Markdown, and extraction evidence guards (`eval_extraction.py --fake` and
+live `.env` mode).
 
-For live workflow checks see [docs/TESTING.md](docs/TESTING.md). Capture and
-recall are exercised in daily use across Claude Code, Codex, Qoder and other
-hooked agents; `uv run membrain doctor` reports backend reachability, index
-health and which agents are connected on your machine.
+For live workflow checks and the 1-week three-way real-workflow comparison
+protocol (`AGENTS.md` vs `membrain` vs competitor), see
+[docs/TESTING.md](docs/TESTING.md). Capture and recall are exercised in daily use
+across Claude Code, Codex, Qoder and other hooked agents;
+`uv run membrain doctor` reports backend reachability, index health and which
+agents are connected on your machine.

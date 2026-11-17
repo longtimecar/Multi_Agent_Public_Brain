@@ -405,15 +405,14 @@ def test_settings_read_credentials_from_env_file(tmp_path, monkeypatch):
         "MEMBRAIN_LLM_BASE_URL=https://llm.example\n"
         "MEMBRAIN_LLM_API_KEY=llm-secret\n"
         "MEMBRAIN_LLM_MODEL=some-model\n"
-        "MEMBRAIN_LLM_API_FORMAT=Anthropic\n"
-        f"MEMBRAIN_OPENVIKING_ROOT={(tmp_path / 'openviking').as_posix()}\n",
+        "MEMBRAIN_LLM_API_FORMAT=Anthropic\n",
         encoding="utf-8",
     )
     # Blank each key through monkeypatch: blank counts as unset, so the file
     # fills it, and monkeypatch restores the real environment afterwards.
     for key in ("MEMBRAIN_EMBED_BASE_URL", "MEMBRAIN_EMBED_API_KEY", "MEMBRAIN_EMBED_MODEL",
                 "MEMBRAIN_LLM_BASE_URL", "MEMBRAIN_LLM_API_KEY", "MEMBRAIN_LLM_MODEL",
-                "MEMBRAIN_LLM_API_FORMAT", "MEMBRAIN_OPENVIKING_ROOT"):
+                "MEMBRAIN_LLM_API_FORMAT"):
         monkeypatch.setenv(key, "")
     monkeypatch.setenv("MEMBRAIN_ENV_FILE", str(env_file))
     s = load_settings()
@@ -422,7 +421,6 @@ def test_settings_read_credentials_from_env_file(tmp_path, monkeypatch):
     assert s.embed_api_key == "embed-secret"
     assert s.llm_enabled and s.llm_api_format == "anthropic"
     assert s.llm_api_key == "llm-secret"
-    assert s.openviking_root == (tmp_path / "openviking").resolve()
 
 
 def test_describe_never_prints_keys(tmp_path):

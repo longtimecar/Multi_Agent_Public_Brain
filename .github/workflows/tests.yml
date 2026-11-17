@@ -7,9 +7,14 @@ on:
 
 jobs:
   pytest:
-    # The capture adapters and process detection target Windows; run the suite
-    # on the platform the project actually supports.
-    runs-on: windows-latest
+    # Windows is the primary platform (capture adapters and process detection
+    # target it); Linux runs the same offline suite so cross-platform breaks
+    # are caught early.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4

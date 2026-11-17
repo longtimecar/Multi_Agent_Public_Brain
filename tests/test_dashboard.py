@@ -70,17 +70,14 @@ def test_dashboard_serves_real_overview_and_static_app(dashboard):
     assert overview["stats"]["total"] == 0
     assert overview["stats"]["episodes"] == 0
 
-    status, _, raw = request("/api/import/preview")
+    status, _, raw = request("/api/import/sessions/preview")
     assert status == 200
     preview = json.loads(raw)
-    assert preview["total"] == 0 and preview["configured"] is False
-    assert preview["root"] == ""
-    assert preview["source_labels"]["openviking"] == "OpenViking"
     assert preview["source_labels"]["unknown-agent"] == "未知来源"
+    assert preview["labels"]["events"]
 
-    status, _, raw = request("/api/import/start", {})
-    assert status == 400
-    assert "未配置" in json.loads(raw)["error"]
+    status, _, raw = request("/api/import/batches")
+    assert status == 200 and json.loads(raw)["batches"] == []
 
     sessions = service.settings.home / "sessions"
     assert not sessions.exists()
@@ -110,12 +107,12 @@ def test_dashboard_does_not_silently_overlap_import_jobs(tmp_path):
     service = MemoryService(make_settings(tmp_path))
     runtime = DashboardRuntime(service, llm_client=FakeLLMClient([]), auto_extract_chat=False)
     try:
-        runtime._import_job = {"status": "running", "kind": "sessions"}
-        with pytest.raises(ValueError, match="Agent 会话导入"):
-            runtime.start_import()
-        runtime._import_job = {"status": "running", "kind": "openviking"}
-        with pytest.raises(ValueError, match="OpenViking"):
+        runtime._import_job = {"status": "running", "kind": "external"}
+        with pytest.raises(ValueError, match="已有其他导入任务"):
             runtime.start_session_import()
+        runtime._import_job = {"status": "running", "kind": "sessions"}
+        job, started = runtime.start_session_import()
+        assert started is False and job["kind"] == "sessions"
     finally:
         service.index.close()
 
@@ -151,16 +148,13 @@ def test_dashboard_add_correct_and_retract_keep_original_fact_immutable(dashboar
     assert original_path.read_text(encoding="utf-8") == original_contents
 
 
-def test_dashboard_library_import_preview_start_browse_read_and_undo(tmp_path, monkeypatch):
-    import time
-    from membrain import openviking_import as ov
-    from test_archive_import import good_ops, make_tree
+def test_dashboard_archive_browse_read_and_batch_undo(tmp_path):
+    from test_archive_import import seed_archive_batch
     from test_core import make_settings
 
-    monkeypatch.setattr(ov, "CALL_PAUSE", 0)
     service = MemoryService(make_settings(tmp_path))
-    runtime = DashboardRuntime(service, FakeLLMClient([good_ops()]))
-    runtime.import_root = make_tree(tmp_path)
+    report = seed_archive_batch(service)
+    runtime = DashboardRuntime(service, FakeLLMClient([]))
     server = create_server("127.0.0.1", 0, runtime)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -175,26 +169,16 @@ def test_dashboard_library_import_preview_start_browse_read_and_undo(tmp_path, m
             return exc.code, json.loads(exc.read())
 
     try:
-        status, preview = call("/api/import/preview")
-        assert status == 200 and preview["total"] == 6 and preview["labels"]["events"]
-        assert not (service.settings.home / "archive").exists()  # a preview writes nothing
-        assert call("/api/import/start", {})[0] == 202
-        for _ in range(100):
-            job = call("/api/import/job")[1]
-            if job["status"] != "running":
-                break
-            time.sleep(0.1)
-        assert job["status"] == "done" and job["report"]["facts_added"] == 2 and job["report"]["archived_new"] == 6
         tree = call("/api/archive")[1]["tree"]
-        assert tree["openviking"]["events"] == 1 and tree["openviking"]["preferences"] == 1
+        assert tree["notes"]["events"] == 1 and tree["notes"]["preferences"] == 1
         found = call("/api/archive?q=" + "%E7%94%B5%E6%B1%A0")[1]["items"]  # 电池
         assert found and found[0]["category"] == "events"
         entry = call("/api/archive/" + found[0]["id"])[1]
         assert "电池" in entry["text"] and entry["total_chars"] > 0
         assert call("/api/archive/a_20260101_zzzzzz")[0] == 404
         batch = call("/api/import/batches")[1]["batches"][0]
-        assert batch["facts"] == 2 and not batch["undone"]
-        assert call("/api/import/undo", {"batch": batch["batch"]})[1] == {"facts_retracted": 2, "archive_hidden": 6}
+        assert batch["batch"] == report["batch"] and batch["facts"] == 2 and not batch["undone"]
+        assert call("/api/import/undo", {"batch": batch["batch"]})[1] == {"facts_retracted": 2, "archive_hidden": 4}
         assert call("/api/import/undo", {"batch": batch["batch"]})[0] == 400
         assert call("/api/archive?q=" + "%E7%94%B5%E6%B1%A0")[1]["items"] == []
     finally:
@@ -216,6 +200,29 @@ def test_dashboard_rejects_cross_site_memory_writes(dashboard):
     assert status == 403
     assert json.loads(raw)["error"]
     assert service.store.all_facts() == []
+
+
+@pytest.mark.parametrize("path", ["/", "/app.js", "/api/overview", "/api/facts", "/api/episodes",
+                                  "/api/profile", "/api/chat-sessions", "/api/archive"])
+def test_dashboard_rejects_rebound_hosts_on_reads(dashboard, path):
+    # DNS rebinding: a page on evil.example resolves its own name to 127.0.0.1,
+    # so the browser sends same-origin GETs whose Host is the attacker's name.
+    request, _ = dashboard
+    status, _, _ = request("/api/facts", {
+        "type": "fact",
+        "subject": "secret",
+        "claim": "Private memory.",
+        "quote": "My private memory secret.",
+    })
+    assert status == 201
+    status, _, raw = request(path, headers={"Host": "evil.example:1966"})
+    assert status == 403
+    assert b"Private memory" not in raw
+    status, _, raw = request(path, headers={"Origin": "http://evil.example"})
+    assert status == 403
+    assert b"Private memory" not in raw
+    status, _, _ = request(path, headers={"Origin": "null"})
+    assert status == 403
 
 
 def test_dashboard_chat_and_model_status_keep_assistant_out_of_memory_evidence(tmp_path):

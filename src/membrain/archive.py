@@ -37,7 +37,8 @@ EMBED_BATCH = 16
 
 CATEGORY_LABELS = {
     "profile": "个人档案", "preferences": "偏好笔记", "events": "事件记录", "experiences": "经验与教训",
-    "code": "程序与项目", "study": "学习资料", "reports": "报告", "sessions": "对话记录", "misc": "其他",
+    "code": "程序与项目", "study": "学习资料", "reports": "报告", "sessions": "对话记录",
+    "imports": "外部导入", "misc": "其他",
 }
 
 

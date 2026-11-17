@@ -9,9 +9,9 @@ the tasks in PLAN.md in order and update it as each one finishes.
 
 - Fact files are immutable after writing. Lifecycle changes go to `memory/ledger.jsonl`.
 - No trait type and no personality inference.
-- Evidence is only text the user typed: never assistant replies, tool output or injected memory blocks.
+- Evidence is only text the user typed: never assistant replies, tool output or injected memory blocks. The one exception is an external export the owner explicitly imports (`external_import.py`, `memory` mode): its chunks are evidence tagged `origin="imported"`, never create a `constraint`, and the whole batch can be undone.
 - Confidence is computed in `confidence.py`, never taken from a model.
-- Contradictions are marked contested and never resolved automatically.
+- Contradictions follow the 4-tier reversible ledger resolution rule; `constraint` facts and exact ties remain `contested` and are never resolved automatically.
 - No MCP tool or extractor writes a `constraint`.
 - Hooks always exit 0. A memory failure must never break the user's turn.
 - `memory/.index/` is disposable. Store nothing there that cannot be rebuilt.

@@ -81,12 +81,47 @@ def describe() -> dict[str, Any]:
     }
 
 
+DESKTOP_SHORTCUT_NAME = "membrain 记忆后台.lnk"
+
+
+def _ps_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def resolve_pythonw() -> Path:
+    from .config import REPO_ROOT
+
+    for candidate in (
+        REPO_ROOT / ".venv" / "Scripts" / "pythonw.exe",
+        Path(sys.executable).with_name("pythonw.exe"),
+        Path(sys.executable),
+    ):
+        if candidate.exists():
+            return candidate
+    return Path(sys.executable)
+
+
+def _run_powershell(script: str, error_prefix: str) -> str:
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+            capture_output=True,
+            timeout=60,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise AutostartError(f"{error_prefix}：{exc}") from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or b"").decode("utf-8", "replace").strip()
+        raise AutostartError(detail[:200] or f"{error_prefix}。")
+    return (result.stdout or b"").decode("utf-8", "replace").strip()
+
+
 def _launcher_body() -> str:
     from .config import REPO_ROOT
 
-    pythonw = REPO_ROOT / ".venv" / "Scripts" / "pythonw.exe"
-    if not pythonw.exists():
-        pythonw = Path(sys.executable)
+    pythonw = resolve_pythonw()
     lines = [
         "' Start the membrain dashboard in the background at logon.",
         "' Installed by the settings page (or `membrain install-autostart`).",
@@ -121,31 +156,67 @@ def _write_launcher() -> Path:
 def _create_shortcut(target: Path) -> None:
     from .config import REPO_ROOT
 
-    def ps_quote(value: str) -> str:
-        return "'" + value.replace("'", "''") + "'"
-
     script = "\n".join([
         "[Console]::OutputEncoding = [Text.Encoding]::UTF8",
         "$startup = [Environment]::GetFolderPath('Startup')",
-        f"$link = Join-Path $startup {ps_quote(LINK_NAME)}",
+        f"$link = Join-Path $startup {_ps_quote(LINK_NAME)}",
         "$shell = New-Object -ComObject WScript.Shell",
         "$shortcut = $shell.CreateShortcut($link)",
-        f"$shortcut.TargetPath = {ps_quote(str(target))}",
-        f"$shortcut.WorkingDirectory = {ps_quote(str(REPO_ROOT))}",
+        f"$shortcut.TargetPath = {_ps_quote(str(target))}",
+        f"$shortcut.WorkingDirectory = {_ps_quote(str(REPO_ROOT))}",
         "$shortcut.Description = 'membrain dashboard (background, no browser)'",
         "$shortcut.Save()",
     ])
-    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
-    try:
-        result = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
-            capture_output=True, timeout=60,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise AutostartError(f"无法写入开机启动项：{exc}") from exc
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or b"").decode("utf-8", "replace").strip()
-        raise AutostartError(detail[:200] or "无法写入开机启动项。")
+    _run_powershell(script, "无法写入开机启动项")
+
+
+def create_desktop_shortcut(
+    port: int = PORT,
+    no_open: bool = False,
+    link_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Create a Windows desktop .lnk shortcut launching the dashboard without a console."""
+    if not supported():
+        raise AutostartError("桌面快捷方式目前只支持 Windows。")
+    from .config import REPO_ROOT
+
+    pythonw = resolve_pythonw()
+    workdir = REPO_ROOT if REPO_ROOT.exists() else Path.home()
+    args_parts = ["-m", "membrain.cli", "dashboard"]
+    if int(port) != PORT:
+        args_parts.extend(["--port", str(int(port))])
+    if no_open:
+        args_parts.append("--no-open")
+    arguments = " ".join(args_parts)
+    # The desktop may be redirected (OneDrive), so ask Windows for it unless
+    # an explicit directory was supplied. Non-ASCII paths travel in UTF-16-LE.
+    desktop_expr = _ps_quote(str(link_dir)) if link_dir is not None else "[Environment]::GetFolderPath('Desktop')"
+    script = "\n".join([
+        "[Console]::OutputEncoding = [Text.Encoding]::UTF8",
+        f"$desktop = {desktop_expr}",
+        f"$path = Join-Path $desktop {_ps_quote(DESKTOP_SHORTCUT_NAME)}",
+        "$shell = New-Object -ComObject WScript.Shell",
+        "$link = $shell.CreateShortcut($path)",
+        f"$link.TargetPath = {_ps_quote(str(pythonw))}",
+        f"$link.Arguments = {_ps_quote(arguments)}",
+        f"$link.WorkingDirectory = {_ps_quote(str(workdir))}",
+        "$link.IconLocation = 'imageres.dll,-1023'",
+        f"$link.Description = {_ps_quote(f'Open the membrain memory dashboard (127.0.0.1:{int(port)})')}",
+        "$link.Save()",
+        "Write-Output $path",
+    ])
+    created_path = _run_powershell(script, "无法创建桌面快捷方式")
+    if not created_path:
+        created_path = str((link_dir or Path.home() / "Desktop") / DESKTOP_SHORTCUT_NAME)
+    return {
+        "ok": True,
+        "supported": True,
+        "name": DESKTOP_SHORTCUT_NAME,
+        "path": created_path,
+        "target": str(pythonw),
+        "arguments": arguments,
+        "port": int(port),
+    }
 
 
 def _remove(path: Path) -> None:

@@ -265,9 +265,10 @@
 
         <div class="view" data-view-panel="library">
           <details class="import-fold" id="import-fold">
-            <summary><span>数据导入 · <strong id="import-fold-count">按需扫描</strong></span><span class="import-fold-hint">本机 Agent 会话与可选历史来源 · 展开管理</span></summary>
+            <summary><span>数据导入 · <strong id="import-fold-count">按需扫描</strong></span><span class="import-fold-hint">外部 AI 迁移、本机 Agent 会话与批次管理 · 展开管理</span></summary>
+            <div class="import-card" id="external-import-card"><div class="side-empty">正在加载外部 AI 导入…</div></div>
             <div class="import-card" id="session-import-card"><div class="side-empty">正在扫描本机 Agent 会话…</div></div>
-            <div class="import-card" id="import-card"><div class="side-empty">正在检查可导入的内容…</div></div>
+            <div class="import-card" id="import-card"><div class="side-empty">正在读取导入批次…</div></div>
           </details>
           <details class="import-fold" id="diffs-fold">
             <summary><span>高级 · 会话变更审计</span><span class="import-fold-hint">查『这条记忆哪来的』用 · 日常无需打开</span></summary>
@@ -346,12 +347,13 @@
         <div class="view" data-view-panel="health">
           <section class="panel health-panel" id="health">
             <div class="panel-header">
-              <div><h2>记忆健康</h2><p class="panel-subtitle">自动扫描重复、冲突、噪声与遗忘候选。只报告不擅改，处理由你决定。</p></div>
+              <div><h2>记忆健康</h2><p class="panel-subtitle">自动扫描重复、冲突、噪声与遗忘候选；平局与硬约束待你裁决，自动处理项可随时撤销。</p></div>
               <div class="overview-stat" id="health-score">—</div>
             </div>
             <div class="health-body">
               <div class="health-summary" id="health-summary">正在扫描…</div>
               <div class="health-findings" id="health-findings"></div>
+              <div class="health-auto-section is-hidden" id="health-auto-section"></div>
             </div>
           </section>
         </div>
@@ -448,7 +450,7 @@
             </section>
 
             <section class="panel model-panel model-panel-wide" id="service">
-              <div class="panel-header"><div><h2>服务与启动</h2><p class="panel-subtitle">登录 Windows 后自动在后台运行，不打开浏览器</p></div><span class="status-badge status-superseded" id="autostart-badge">读取中</span></div>
+              <div class="panel-header"><div><h2>服务与启动</h2><p class="panel-subtitle">Windows 桌面快捷方式与可选的后台开机自启动（默认关闭）</p></div><span class="status-badge status-superseded" id="autostart-badge">读取中</span></div>
               <div class="model-body">
                 <div class="service-row">
                   <div class="service-copy">
@@ -459,6 +461,15 @@
                   <button class="switch" id="autostart-toggle" type="button" role="switch" aria-checked="false" aria-label="开机自启动"><span class="switch-thumb"></span></button>
                 </div>
                 <p class="model-result" id="autostart-result"></p>
+                <div class="service-row service-row-divider">
+                  <div class="service-copy">
+                    <strong>桌面快捷方式</strong>
+                    <p>在桌面创建「membrain 记忆后台.lnk」，双击无黑框启动并在浏览器打开控制台；若后台已运行则直接切回页面。</p>
+                    <p class="model-hint" id="shortcut-detail">仅 Windows 支持；首次安装或移动仓库位置后可随时点击生成。</p>
+                  </div>
+                  <button class="button button-outline" id="shortcut-create-button" type="button">创建桌面快捷方式</button>
+                </div>
+                <p class="model-result" id="shortcut-result"></p>
               </div>
             </section>
           </div>

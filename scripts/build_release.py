@@ -25,9 +25,10 @@ DIST = REPO / "dist" / "membrain-0.1.0"
 STAGE = DIST / "membrain-0.1.0"
 
 INCLUDE_FILES = ["pyproject.toml", "README.md", "AGENTS.md", "CLAUDE.md", ".env.example",
-                 ".gitignore", "LICENSE", "RELEASE-NOTES.md", ".mcp.json.example"]
+                 ".gitignore", "LICENSE", "RELEASE-NOTES.md", ".mcp.json.example",
+                 "install.ps1"]
 INCLUDE_DIRS = ["src", "tests", "scripts", "harness", "skills"]
-DOC_ALLOW = {"DESIGN.md", "PLAN.md", "TESTING.md", "OPEN_SOURCE_MEMORY_RESEARCH.md"}
+DOC_ALLOW = {"DESIGN.md", "PLAN.md", "TESTING.md", "ONBOARDING.md", "OPEN_SOURCE_MEMORY_RESEARCH.md"}
 SKIP_DIRS = {"__pycache__", ".venv", ".pytest_cache", ".mypy_cache", "node_modules",
              "backups", "evidence", "memory", "dist", "promo_membrain_20261031",
              "reference_materials", "content_directions", ".edge-check"}
